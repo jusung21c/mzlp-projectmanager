@@ -3,7 +3,7 @@
   "main": "./lib/mzlp-projectmanager",
   "version": "0.0.0",
   "description": "A short description of your package",
-  "keywords": [
+  "keywords": ["mzlp","mediazen","lpteam","juicyjusung"
   ],
   "activationCommands": {
     "atom-workspace": "mzlp-projectmanager:toggle"
