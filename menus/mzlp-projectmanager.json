@@ -1,0 +1,26 @@
+{
+  "context-menu": {
+    "atom-text-editor": [
+      {
+        "label": "Toggle mzlp-projectmanager",
+        "command": "mzlp-projectmanager:toggle"
+      }
+    ]
+  },
+  "menu": [
+    {
+      "label": "Packages",
+      "submenu": [
+        {
+          "label": "mzlp-projectmanager",
+          "submenu": [
+            {
+              "label": "Toggle",
+              "command": "mzlp-projectmanager:toggle"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
