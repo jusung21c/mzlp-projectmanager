@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="kr">
+	<head>
+	<meta charset="UTF-8">
+	<title>http://www.blueb.co.kr</title>
+<link rel="stylesheet" type="text/css" href="style.css" />
+</head>
+<body>
+
+<div class="row">
+  <input type="checkbox" id="simple_3">
+  <label for="simple_3" class="green"></label>hi
+</div>
+
+
+
+
+</body>
+</html>
+
+
+
+let ignoredNames = atom.config.get('core.ignoredNames');
+var defaultconfig = [".git",".hg",".DS_Store","._*",".svn","Thumbs.db","desktop.ini"];
+
+for(var n in defaultconfig){
+	ignoredNames.splice(ignoredNames.indexOf(defaultconfig[n]),1);
+}
