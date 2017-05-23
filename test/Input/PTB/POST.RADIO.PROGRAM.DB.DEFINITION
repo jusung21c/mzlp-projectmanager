@@ -1,0 +1,732 @@
+﻿JINIE Post.RadioMain ()
+
+	! CHECK MULTI-MODAL INTERRUPT
+	CALL Common.CheckInterrupt () ;
+	
+	IF ( $N.STATUS.PROCESS = @N_PROCESS_RULE & $N.STATUS.PROGRAM = @N_FLAG_ON & $N.INTERRUPT.TYPE = 0 ) |
+		( $N.STATUS.PROCESS = @N_PROCESS_RULE & $N.STATUS.PROGRAM = @N_FLAG_ON & $N.INTERRUPT.TYPE = 4 ) THEN
+		BEGIN
+			! CONTROL PROCESS & PROGRAM
+			CALL Common.ControlPost () ;
+			
+			! SET REFERENCE DB & REFERENCE KEY
+			IF $N.INTERRUPT.TYPE = 4 THEN
+				BEGIN
+					N.REF.DB := @N_REFERENCE_INFO ;
+					N.REF.ID := 1 ;
+					S.REF.KEY := "" ;
+					
+					CALL Common.ReferenceKey (N.REF.DB, N.REF.ID, S.REF.KEY) ;
+				END
+			ELSE
+				BEGIN
+					N.SCORE.INTENTION.LIMIT ~= $S.STT.RESULT.INTENTION[1][2]; !INTENT LIMITED : ex) Search/f5600 /n 
+					
+					! SLOT EXTRACTING BY INTENTION
+					IF ( N.SCORE.INTENTION.LIMIT > N.SCORE.INTENTION.REJECTION.VALUE ) & ( $S.STT.RESULT.INTENTION[1][1] <> "Unsupported" ) THEN
+						BEGIN
+							IF $S.STT.RESULT.SLOT[1][1] <> "" THEN ! SLOT EXIST
+								BEGIN
+									S.SLOT.TEMP := "<SLOT_FM_FREQ>" + "\n" + "<SLOT_AM_FREQ>" + "\n" + "<SLOT_LINE_NUMBER>" + "\n" + "<SLOT_PRESET_NUMBER>" ;
+									
+									CALL Common.SlmIntentionThresholdOneBest (S.SLOT.TEMP) ;
+									CALL Common.SlmSlotThresholdOneBest () ;
+									
+									S.INTENT.VALUE := $S.STT.RESULT.INTENTION[1][1] ; ! INTENTION SAVED
+									
+									IF $S.RULE.LEXEMES[1][2] = "\@N_LEXEME_FM" & $S.RULE.LEXEMES[1][3] <> "" THEN
+										BEGIN
+											CALL LpProc.FmFrequencySlot () ;
+											
+											S.SLOT.FIRST.ID := S.SLOT.ID ;
+											S.SLOT.FIRST.TAG := S.SLOT.TAG.FM.FREQ ;
+											S.SLOT.FIRST.VALUE := S.SLOT.RESULT ;
+											S.SLOT.FIRST.SCORE := S.SLOT.SCORE.FM.FREQ ;
+										END
+									IF $S.RULE.LEXEMES[1][2] = "\@N_LEXEME_AM" & $S.RULE.LEXEMES[1][3] <> "" THEN
+										BEGIN
+											CALL LpProc.AmFrequencySlot () ;
+											
+											S.SLOT.FIRST.ID := S.SLOT.ID ;
+											S.SLOT.FIRST.TAG := S.SLOT.TAG.AM.FREQ ;
+											S.SLOT.FIRST.VALUE := S.SLOT.RESULT ;
+											S.SLOT.FIRST.SCORE := S.SLOT.SCORE.AM.FREQ ;
+										END
+									IF $S.RULE.LEXEMES[1][2] = "\@N_LEXEME_PRESET_NUMBER" & $S.RULE.LEXEMES[1][3] <> "" THEN
+										BEGIN 
+											S.SLOT.FIRST.ID := S.SLOT.ID.NUMBER ;
+											S.SLOT.FIRST.TAG := S.SLOT.TAG.NUMBER ;
+											S.SLOT.FIRST.VALUE := S.SLOT.NUMBER ;
+											S.SLOT.FIRST.SCORE := S.SLOT.SCORE.NUMBER ;
+										END
+								END
+							ELSE
+								BEGIN
+									S.INTENT.VALUE := $S.STT.RESULT.INTENTION[1][1] ; ! INTENTION SAVED
+									S.SLOT.FIRST.ID := "" ;
+									S.SLOT.FIRST.TAG := "" ; ! SLOT1 TAG SAVED
+									S.SLOT.FIRST.VALUE := "" ; ! SLOT1 VALUE SAVED
+									S.SLOT.FIRST.SCORE := "" ; ! SLOT1 SCORE SAVED
+								END
+								
+							N.REF.DB := @N_REFERENCE_INFO ;
+							N.REF.ID := 11 ;
+							S.REF.KEY := S.INTENT.VALUE + S.SLOT.FIRST.TAG + S.SLOT.SECOND.TAG + S.SLOT.THIRD.TAG ;
+							
+							CALL Common.ReferenceKey (N.REF.DB, N.REF.ID, S.REF.KEY) ;	
+						END
+					ELSE
+						BEGIN
+							CALL Post.Garbage ();
+						END
+				END
+		END
+		
+	IF ( $N.STATUS.PROCESS = @N_PROCESS_RESULT & $N.STATUS.PROGRAM = @N_FLAG_ON & $N.INTERRUPT.TYPE = 0 ) |
+		( $N.STATUS.PROCESS = @N_PROCESS_RESULT & $N.STATUS.PROGRAM = @N_FLAG_ON & $N.INTERRUPT.TYPE = 4 ) THEN
+		BEGIN
+			! ART
+			CALL Common.ARTIntentionSetting () ;
+			
+			! GET 1-Best Result From Reference DB
+			CALL Common.ReferenceOneBestResult () ;
+			
+			! SET ACTION-VALUE
+			CALL Common.SetActionValue () ;
+			
+			! SET RULE-TAG
+			CALL Common.SetPreRuleTag () ;
+			
+			! SYSTEM CALL
+			N.CID ~= S.RESULT.FIX.CID ;
+			CALL Common.SystemCallPost (N.CID) ;
+			
+			! CALL LP PROCEDURE
+			IF S.RESULT.FIX.CID = "\@N_TAG_RADIO_ID" THEN
+				BEGIN
+					CALL LpProc.Radio () ;
+				END
+				
+			IF S.RESULT.FIX.CID = "\@N_TAG_FM_ID" THEN
+				BEGIN
+					CALL LpProc.Fm () ;
+				END
+				
+			IF S.RESULT.FIX.CID = "\@N_TAG_FM_FREQUENCY_ID" | S.RESULT.FIX.CID = "\@N_TAG_FM_FREQ_SLOT_ID" THEN
+				BEGIN
+					CALL LpProc.FmFrequency () ;
+				END
+				
+			IF S.RESULT.FIX.CID = "\@N_TAG_AM_ID" THEN
+				BEGIN
+					CALL LpProc.Am () ;
+				END
+				
+			IF S.RESULT.FIX.CID = "\@N_TAG_AM_FREQUENCY_ID" | S.RESULT.FIX.CID = "\@N_TAG_AM_FREQ_SLOT_ID" THEN
+				BEGIN
+					CALL LpProc.AmFrequency () ;
+				END
+				
+			IF S.RESULT.FIX.CID = "\@N_TAG_PRESET_NUMBER_ID" THEN ! 저장방송 1
+				BEGIN
+					CALL LpProc.PresetNumber () ;
+				END
+				
+			IF S.RESULT.FIX.CID = "\@N_TAG_MANUAL_FM_ID" THEN ! FM (에프엠) <89.1>
+				BEGIN
+					CALL LpProc.ManualFm () ;
+				END
+				
+			IF S.RESULT.FIX.CID = "\@N_TAG_MANUAL_AM_ID" THEN ! AM (에이엠) <1080>
+				BEGIN
+					CALL LpProc.ManualAm () ;
+				END
+				
+			IF S.RESULT.FIX.CID = "\@N_TAG_MANUAL_PRESET_ID" THEN ! <1~40>번 방송
+				BEGIN
+					CALL LpProc.ManualPreset () ;
+				END
+				
+			! REPEAT CONTROL
+			CALL Common.RepeatControl () ;
+			
+			! FEEDBACK PROMPT CONTROL
+			CALL Common.FeedbackPromptControl () ;
+			
+			! ON SCREEN TEXT
+			CALL Common.FeedbackOnScreenText () ;
+		END
+		
+	IF $N.STATUS.PROCESS = @N_PROCESS_TRANSITION & $N.STATUS.PROGRAM = @N_FLAG_ON THEN
+		BEGIN
+			! VR 종료 후, MAINMENU Dialog 진입 시 정상 Prompt 출력을 위하여 초기화
+			IF $N.TRANSITION.DIALOG = @N_DIALOG_STOP | $N.TRANSITION.DIALOG = @N_DIALOG_EXIT THEN
+				BEGIN
+					S.RESULT.FIX.CID := "" ;
+				END
+		END
+EOP
+
+! "라디오" 명령어 처리 프로시저
+JINIE LpProc.Radio ()
+
+	IF N.AVN.RADIO.LAST.MODE = 200000 THEN
+		BEGIN
+			CALL Common.FeedbackBasicSetting () ;
+		END
+	ELSE
+		BEGIN
+			S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K4_2_0_02" ;
+			S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S4_2_0_02" ;
+			S.INNER.PROMPT.DISPLY.STR := "" ;
+			N.EXIT.ACTION.TRANSITION := 28001 ;
+			$N.CONTROL.PROCESS.FEEDBACK := @N_FLAG_ON ;
+			$N.TRANSITION.DIALOG := @N_DIALOG_STOP ;
+			
+			IF N.AVN.RADIO.LAST.MODE = 1 THEN ! FM
+				BEGIN
+					S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K4_2_0_02" ;
+					S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S4_2_0_02" ;
+					S.INNER.PROMPT.DISPLY.STR := "" ;
+					N.EXIT.ACTION.TRANSITION := 28001 ;
+					$N.CONTROL.PROCESS.FEEDBACK := @N_FLAG_ON ;
+					$N.TRANSITION.DIALOG := @N_DIALOG_STOP ;
+				END
+				
+			IF N.AVN.RADIO.LAST.MODE = 4 THEN ! AM
+				BEGIN
+					S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K4_2_0_06" ;
+					S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S4_2_0_06" ;
+					S.INNER.PROMPT.DISPLY.STR := "" ;
+					N.EXIT.ACTION.TRANSITION := 28001 ;
+					$N.CONTROL.PROCESS.FEEDBACK := @N_FLAG_ON ;
+					$N.TRANSITION.DIALOG := @N_DIALOG_STOP ;
+				END
+		END
+EOP
+
+! "에프엠" 명령어 처리 프로시저
+JINIE LpProc.Fm ()
+
+	S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K4_2_0_02" ;
+	S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S4_2_0_02" ;
+	S.INNER.PROMPT.DISPLY.STR := "" ;
+	N.EXIT.ACTION.TRANSITION := 1002 ;
+	$N.CONTROL.PROCESS.FEEDBACK := @N_FLAG_ON ;
+	$N.TRANSITION.DIALOG := @N_DIALOG_STOP ;
+EOP
+
+! "에프엠 <Fm_Freq>", "<Fm_Freq>" 명령어 ID를 실제 주파수 변환 처리 프로시저
+JINIE LpProc.FmFrequencySlot ()
+
+	TEMPORARY NUMBER N.TAG.TEMP := 1 ;
+	TEMPORARY NUMBER N.TEMP := 1 ;
+	TEMPORARY NUMBER N.TEMP.SCORE := 3 ;
+	TEMPORARY NUMBER N.SLOT.COUNT := 1 ;
+	TEMPORARY NUMBER N.SLOT.RADIO.SCORE.PRE.TEMP := 0 ;
+	TEMPORARY NUMBER N.FM.FREQ.FLAG := 0 ;
+
+	S.SLOT.RESULT := "" ;
+	S.SLOT.ID := "" ;
+	
+	WHILE $S.STT.RESULT.SLOT[1][N.TAG.TEMP] <> ""	DO
+		BEGIN 
+			IF $S.STT.RESULT.SLOT[1][N.TAG.TEMP] <> "<SLOT_FM_FREQ>" THEN ! TAG가 <SLOT_FM_FREQ>가 아닐 때 GARBAGE 처리
+				BEGIN
+					CALL Post.Garbage () ;
+					LOG "LP LOG : LpProc.FmFrequencySlot - NO EXIST, FM_SLOT_TAG_REJECTION" ;
+				END
+			ELSE
+				BEGIN
+					WHILE $S.STT.RESULT.ID[1][N.TEMP] <> ""	DO
+						BEGIN
+							! FM이 맨 앞에 있을 때, ID에 207000 저장 안하도록 N.TEMP 설정
+							IF $S.STT.RESULT.ID[1][N.TEMP] = "\@N_TAG_FM_FREQUENCY_ID" THEN ! Command ID : FM 89.5
+								BEGIN
+									N.TEMP := N.TEMP + 1 ;
+								END
+							ELSE ! 530 AM
+								BEGIN
+									N.TEMP := N.TEMP ;
+								END
+							
+							IF $S.STT.RESULT.ID[1][N.TEMP] = "1111" THEN ! POINT
+								BEGIN
+									S.SLOT.RESULT := S.SLOT.RESULT + "." ;
+									S.SLOT.ID := S.SLOT.ID ;
+									N.FM.FREQ.FLAG := 1 ;
+								END
+							ELSE ! NUMBER
+								BEGIN
+									IF $S.STT.RESULT.ID[1][N.TEMP] = "100" THEN ! HUNDRED
+										BEGIN
+											IF $S.STT.RESULT.ID[1][N.TEMP+1] <> "1111" THEN ! 101.1
+												BEGIN
+													S.SLOT.RESULT := S.SLOT.RESULT + "10" ;
+													S.SLOT.ID := S.SLOT.ID + "10" ;
+												END
+											ELSE ! 100.1
+												BEGIN
+													S.SLOT.RESULT := S.SLOT.RESULT + $S.STT.RESULT.ID[1][N.TEMP] ;
+													S.SLOT.ID := S.SLOT.ID + $S.STT.RESULT.ID[1][N.TEMP] ;
+													N.FM.FREQ.FLAG := 1 ; ! 질문 : flag 변경 이유
+												END
+										END
+									ELSE ! NUMBER
+										BEGIN
+											IF N.FM.FREQ.FLAG = 1 THEN
+												BEGIN
+													S.SLOT.RESULT := S.SLOT.RESULT + $S.STT.RESULT.ID[1][N.TEMP] ;
+													S.SLOT.ID := S.SLOT.ID + $S.STT.RESULT.ID[1][N.TEMP] ;
+													S.SLOT.ID := S.SLOT.ID + "0" ;
+												END
+											ELSE
+												BEGIN
+													S.SLOT.RESULT := S.SLOT.RESULT + $S.STT.RESULT.ID[1][N.TEMP] ;
+													S.SLOT.ID := S.SLOT.ID + $S.STT.RESULT.ID[1][N.TEMP] ;
+												END
+										END
+								END
+								
+							! N.FM.FREQ.FLAG가 1 일 때, 정제된 VALUE, ID 저장 87.5\f87.9
+							IF N.FM.FREQ.FLAG = 1 THEN
+								BEGIN
+									N.DIP.NUMBER ~= S.SLOT.ID ;
+									S.INNER.LOG.STRING ~= N.DIP.NUMBER ;
+									LOG "LP LOG : LpProc.FmFrequencySlot - N.DIP.NUMBER = " + S.INNER.LOG.STRING ;
+									
+									IF (8750 <= N.DIP.NUMBER) & (N.DIP.NUMBER <= 10790) THEN
+										BEGIN
+											IF N.SLOT.COUNT = 1 THEN
+												BEGIN
+													S.SLOT.FREQ.SCORE.CONTROL := $S.STT.RESULT.SLOT[1][N.TEMP.SCORE] ; ! SCORE 저장
+													S.SLOT.FREQ.VALUE.CONTROL := S.SLOT.RESULT ; ! 정제한 VALUE 값 저장
+													S.SLOT.FREQ.ID.CONTROL := S.SLOT.ID ; ! 정제한 ID 값 저장
+												END
+											ELSE
+												BEGIN
+													S.SLOT.FREQ.SCORE.CONTROL := S.SLOT.FREQ.SCORE.CONTROL + "\f" + $S.STT.RESULT.SLOT[1][N.TEMP.SCORE] ;
+													S.SLOT.FREQ.VALUE.CONTROL := S.SLOT.FREQ.VALUE.CONTROL + "\f" + S.SLOT.RESULT ;
+													S.SLOT.FREQ.ID.CONTROL := S.SLOT.FREQ.ID.CONTROL + "\f" + S.SLOT.ID ;
+												END
+									
+											LOG "LP LOG : LpProc.FmFrequencySlot - S.SLOT.FREQ.SCORE.CONTROL = " + S.SLOT.FREQ.SCORE.CONTROL ;
+											LOG "LP LOG : LpProc.FmFrequencySlot - S.SLOT.FREQ.VALUE.CONTROL = " + S.SLOT.FREQ.VALUE.CONTROL ;
+											LOG "LP LOG : LpProc.FmFrequencySlot - S.SLOT.FREQ.ID.CONTROL = " + S.SLOT.FREQ.ID.CONTROL ;
+											
+											S.SLOT.RESULT := "" ; ! 다음 SLOT 값을 담기 위해 초기화
+											S.SLOT.ID := "" ;
+											N.DIP.NUMBER := 0 ;
+											N.SLOT.COUNT := N.SLOT.COUNT + 1 ; ! COUNT=1 이면 S.SLOT.SCORE.CONRTOL 변수에 제일먼저 엔진 SCORE 값 저장.
+											N.TEMP.SCORE := N.TEMP.SCORE + 3 ; ! 다음 SOCRE 값을 저장하기 위함.
+											N.FM.FREQ.FLAG := 0 ;
+										END
+								END
+							N.TEMP := N.TEMP + 1 ;
+						END
+				END
+			N.TAG.TEMP := N.TAG.TEMP + 3 ;
+		END
+		
+		N.TEMP := 1 ;	
+		N.SLOT.RADIO.SCORE.PRE.TEMP := 0 ;
+		S.SLOT.FM.FREQ := "" ; ! 최종 FM vaule 값 저장
+		S.SLOT.ID.FM.FREQ := "" ; ! 최종 FM ID 값 저장
+		
+		WHILE S.SLOT.FREQ.VALUE.CONTROL[1][N.TEMP] <> "" DO
+			BEGIN
+				IF S.SLOT.FREQ.SCORE.CONTROL[1][N.TEMP] <> "" THEN
+					BEGIN 
+						N.SLOT.SCORE.FM.FREQ ~= S.SLOT.FREQ.SCORE.CONTROL[1][N.TEMP] ;
+					END
+				ELSE ! S.SLOT.FREQ.SCORE.CONTROL[1][N.TEMP] 가 없는 경우에는 원래 있던 score 를 다시 담아줌.
+					BEGIN 
+						N.SLOT.SCORE.FM.FREQ := N.SLOT.SCORE.FM.FREQ ;
+					END
+				
+				IF N.SLOT.RADIO.SCORE.PRE.TEMP < N.SLOT.SCORE.FM.FREQ THEN
+					BEGIN
+						S.SLOT.FM.FREQ := S.SLOT.FREQ.VALUE.CONTROL[1][N.TEMP] ;
+						S.SLOT.ID.FM.FREQ := S.SLOT.FREQ.ID.CONTROL[1][N.TEMP] ;
+						N.SLOT.RADIO.SCORE.PRE.TEMP ~= S.SLOT.FREQ.SCORE.CONTROL[1][N.TEMP] ;
+					END
+				ELSE ! N.SLOT.RADIO.SCORE.PRE.TEMP => N.SLOT.SCORE.FM.FREQ
+					BEGIN
+						IF S.SLOT.FREQ.SCORE.CONTROL[1][N.TEMP] <> "" THEN ! ex)S.SLOT.FREQ.VALUE.CONTROL = 990\f9 , S.SLOT.FREQ.SCORE.CONTROL = 5354\f6000
+							BEGIN 
+								S.SLOT.FM.FREQ := S.SLOT.FM.FREQ ;
+								S.SLOT.ID.FM.FREQ := S.SLOT.ID.FM.FREQ ;
+							END
+						ELSE ! S.SLOT.FREQ.SCORE.CONTROL[1][N.TEMP] = "" ex)S.SLOT.FREQ.VALUE.CONTROL = 9\f9\f9 , S.SLOT.FREQ.SCORE.CONTROL = 5354\f\f
+							BEGIN
+								S.SLOT.FM.FREQ := S.SLOT.FM.FREQ + S.SLOT.FREQ.VALUE.CONTROL[1][N.TEMP] ;
+								S.SLOT.ID.FM.FREQ := S.SLOT.ID.FM.FREQ + S.SLOT.FREQ.ID.CONTROL[1][N.TEMP] ;
+							END
+					END
+				N.TEMP := N.TEMP + 1 ;
+			END
+	
+	S.SLOT.SCORE.FM.FREQ ~= N.SLOT.RADIO.SCORE.PRE.TEMP ;
+	S.SLOT.RESULT := S.SLOT.FM.FREQ ;
+	S.SLOT.ID := S.SLOT.ID.FM.FREQ ;
+EOP
+
+! "에프엠 <Fm_Freq>", "<Fm_Freq>" 명령어 처리 프로시저
+JINIE LpProc.FmFrequency ()
+
+	S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K4_2_0_01_A" + " " + S.SLOT.RESULT + " " + "\@S_DIALOG_PROMPT_LID_K4_2_0_01_B" ;
+	S.INNER.PROMPT.SIMPLY.STR := S.SLOT.RESULT + " " + "\@S_DIALOG_PROMPT_LID_S4_2_0_01" ;
+	S.INNER.PROMPT.DISPLY.STR := "" ;
+	N.EXIT.ACTION.TRANSITION := 1004 ;
+	$N.CONTROL.PROCESS.FEEDBACK := @N_FLAG_ON ;
+	$N.TRANSITION.DIALOG := @N_DIALOG_STOP ;
+EOP
+
+! "에이엠" 명령어 처리 프로시저
+JINIE LpProc.Am ()
+
+	S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K4_2_0_06" ;
+	S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S4_2_0_06" ;
+	S.INNER.PROMPT.DISPLY.STR := "" ;
+	N.EXIT.ACTION.TRANSITION := 4003 ;
+	$N.CONTROL.PROCESS.FEEDBACK := @N_FLAG_ON ;
+	$N.TRANSITION.DIALOG := @N_DIALOG_STOP ;
+EOP
+
+! "에이엠 <Am_Freq>", "<Am_Freq>" 명령어 ID를 실제 주파수 변환 처리 프로시저
+JINIE LpProc.AmFrequencySlot ()
+
+	TEMPORARY NUMBER N.TAG.TEMP := 1 ;
+	TEMPORARY NUMBER N.TEMP := 1 ;
+	TEMPORARY NUMBER N.TEMP.SCORE := 3 ;
+	TEMPORARY NUMBER N.SLOT.COUNT := 1 ;
+	TEMPORARY NUMBER N.SLOT.RADIO.SCORE.PRE.TEMP := 0 ;
+	TEMPORARY NUMBER N.SLOT.FIRST := 0 ;
+	TEMPORARY NUMBER N.SLOT.SECOND := 0 ;
+	TEMPORARY NUMBER N.SLOT.THIRD := 0 ;
+	TEMPORARY NUMBER N.SLOT.RESULT := 0 ;
+	
+	S.SLOT.RESULT := "" ;
+	S.SLOT.ID := "" ;
+	
+	WHILE $S.STT.RESULT.SLOT[1][N.TAG.TEMP] <> ""	DO
+		BEGIN 
+			IF $S.STT.RESULT.SLOT[1][N.TAG.TEMP] <> "<SLOT_AM_FREQ>" THEN
+				BEGIN
+					CALL Post.Garbage () ;
+					LOG "LP LOG : LpProc.AmFrequencySlot - NO EXIST, AM_SLOT_TAG_REJECTION" ;
+				END
+			ELSE
+				BEGIN
+					WHILE $S.STT.RESULT.ID[1][N.TEMP] <> "" DO
+						BEGIN
+							! AM이 맨 앞에 있을 때, ID에 209000 저장 안하도록 N.TEMP 설정
+							IF $S.STT.RESULT.ID[1][N.TEMP] = "\@N_TAG_AM_FREQUENCY_ID" THEN ! Command ID : AM 530
+								BEGIN
+									N.TEMP := N.TEMP + 1 ;
+								END
+							ELSE ! 530 AM
+								BEGIN
+									N.TEMP := N.TEMP ;
+								END
+							
+							IF $S.STT.RESULT.ID[1][N.TEMP+1] <> "" THEN ! 500 60
+								BEGIN
+									IF $S.STT.RESULT.ID[1][N.TEMP+2] <> "" THEN ! 1000 100 10
+										BEGIN
+											N.SLOT.THIRD ~= $S.STT.RESULT.ID[1][N.TEMP+2] ;
+										END
+										
+									IF ($S.STT.RESULT.ID[1][N.TEMP+2] <> "") & (N.SLOT.THIRD < 100) THEN ! 1000 100 10 (17 100 1000 100 10 인식됐을 경우 두 번째 자리 까지만 정제 해주기 위함.)
+										BEGIN
+											N.SLOT.FIRST ~= $S.STT.RESULT.ID[1][N.TEMP] ;
+											N.SLOT.SECOND ~= $S.STT.RESULT.ID[1][N.TEMP+1] ;
+											N.SLOT.THIRD ~= $S.STT.RESULT.ID[1][N.TEMP+2] ;
+											
+											N.TEMP := N.TEMP + 3 ;
+										END
+									ELSE ! 5 60
+										BEGIN
+											N.SLOT.FIRST ~= $S.STT.RESULT.ID[1][N.TEMP] ;
+											N.SLOT.SECOND ~= $S.STT.RESULT.ID[1][N.TEMP+1] ;
+											N.SLOT.THIRD := 0 ;
+											
+											N.TEMP := N.TEMP + 2 ;
+										END
+								END
+							ELSE ! 1000
+								BEGIN
+									! 560 AM 인식 시 ID가 500 60 209000로 전달 됨, 209000 뒤에는 ID가 존재하지 않으므로 NULL인지 확인 필요
+									IF $S.STT.RESULT.ID[1][N.TEMP] = "" THEN
+										BEGIN
+											N.SLOT.FIRST := 0 ;
+											N.SLOT.SECOND := 0 ;
+											N.SLOT.THIRD := 0 ;
+										END
+									ELSE
+										BEGIN
+											N.SLOT.FIRST ~= $S.STT.RESULT.ID[1][N.TEMP] ;
+											N.SLOT.SECOND := 0 ;
+											N.SLOT.THIRD := 0 ;
+										END
+									
+									N.TEMP := N.TEMP + 1 ;
+								END
+								
+							IF N.SLOT.FIRST < 100 THEN ! 17 hundred , 6 0 0, 6 9 0
+								BEGIN
+									IF N.SLOT.SECOND = 100 THEN ! 17 hundred
+										BEGIN
+											N.SLOT.RESULT := N.SLOT.FIRST ;
+											S.SLOT.RESULT ~= N.SLOT.RESULT ;
+											S.SLOT.RESULT := S.SLOT.RESULT + "00" ;
+										END
+									ELSE 
+										BEGIN
+											IF N.SLOT.SECOND < 10 THEN ! 6 0 0, 6 9 0, 17 1
+												BEGIN
+													IF N.SLOT.THIRD = 0 THEN ! 6 0 0, 6 9 0
+														BEGIN
+															N.SLOT.RESULT := N.SLOT.FIRST * 100 + N.SLOT.SECOND ; ! 6 0 0, 6 9 0
+															S.SLOT.RESULT ~= N.SLOT.RESULT ;
+														END
+													ELSE
+														BEGIN
+															N.SLOT.RESULT := N.SLOT.FIRST * 100 + N.SLOT.SECOND * 10 + N.SLOT.THIRD ; ! 17 1 -> 1701
+															S.SLOT.RESULT ~= N.SLOT.RESULT ;
+														END
+												END
+											ELSE
+												BEGIN
+													N.SLOT.RESULT := N.SLOT.FIRST * 100 + N.SLOT.SECOND ; ! 6 10 -> 610
+													S.SLOT.RESULT ~= N.SLOT.RESULT ;
+												END
+										END
+								END
+							ELSE ! 1000 700 50
+								BEGIN
+									IF N.SLOT.THIRD = 0 THEN
+										BEGIN
+											N.SLOT.RESULT := N.SLOT.FIRST + N.SLOT.SECOND ;
+											S.SLOT.RESULT ~= N.SLOT.RESULT ;
+										END
+									ELSE
+										BEGIN
+											N.SLOT.RESULT := N.SLOT.FIRST + N.SLOT.SECOND + N.SLOT.THIRD ;
+											S.SLOT.RESULT ~= N.SLOT.RESULT ;
+										END
+								END
+								
+							N.DIP.NUMBER ~= S.SLOT.RESULT ;
+							S.SLOT.ID := S.SLOT.RESULT + "00" ;
+							LOG "LP LOG : LpProc.AmFrequencySlot - S.SLOT.RESULT = " + S.SLOT.RESULT ;
+								
+							IF (530 <= N.DIP.NUMBER) & (N.DIP.NUMBER <= 1710) THEN
+								BEGIN
+									IF N.SLOT.COUNT = 1 THEN
+										BEGIN
+											S.SLOT.FREQ.SCORE.CONTROL := $S.STT.RESULT.SLOT[1][N.TEMP.SCORE] ; ! SCORE 저장
+											S.SLOT.FREQ.VALUE.CONTROL := S.SLOT.RESULT ; ! 정제한 VALUE 값 저장
+											S.SLOT.FREQ.ID.CONTROL := S.SLOT.ID ; ! 정제한 ID 값 저장
+										END
+									ELSE
+										BEGIN
+											S.SLOT.FREQ.SCORE.CONTROL := S.SLOT.FREQ.SCORE.CONTROL + "\f" + $S.STT.RESULT.SLOT[1][N.TEMP.SCORE] ;
+											S.SLOT.FREQ.VALUE.CONTROL := S.SLOT.FREQ.VALUE.CONTROL + "\f" + S.SLOT.RESULT ;
+											S.SLOT.FREQ.ID.CONTROL := S.SLOT.FREQ.ID.CONTROL + S.SLOT.ID ; ! 정제한 ID 값 저장
+										END
+									
+									LOG "LP LOG : LpProc.AmFrequencySlot - S.SLOT.FREQ.SCORE.CONTROL = " + S.SLOT.FREQ.SCORE.CONTROL ;
+									LOG "LP LOG : LpProc.AmFrequencySlot - S.SLOT.FREQ.VALUE.CONTROL = " + S.SLOT.FREQ.VALUE.CONTROL ;
+									LOG "LP LOG : LpProc.AmFrequencySlot - S.SLOT.FREQ.ID.CONTROL = " + S.SLOT.FREQ.ID.CONTROL ;
+									
+									S.SLOT.RESULT := "" ; ! 다음 SLOT 값을 담기 위해 초기화
+									N.SLOT.FIRST := 0 ;
+									N.SLOT.SECOND := 0 ;
+									N.SLOT.THIRD := 0 ;
+									N.SLOT.RESULT := 0 ;
+									S.SLOT.RESULT := "" ;
+									N.DIP.NUMBER := 0 ;
+									N.SLOT.COUNT := N.SLOT.COUNT + 1 ; ! COUNT=1 이면 S.SLOT.SCORE.CONRTOL 변수에 제일먼저 엔진 SCORE 값 저장.
+									N.TEMP.SCORE := N.TEMP.SCORE + 3 ; ! 다음 SOCRE 값을 저장하기 위함.
+								END
+						END
+				END
+			N.TAG.TEMP := N.TAG.TEMP + 3 ;
+		END
+		
+	N.TEMP := 1 ;
+	N.SLOT.RADIO.SCORE.PRE.TEMP := 0 ;
+	S.SLOT.AM.FREQ := "" ; ! 최종 AM vaule 값 저장
+	S.SLOT.ID.AM.FREQ := "" ; ! 최종 AM ID 값 저장
+	
+	WHILE S.SLOT.FREQ.SCORE.CONTROL[1][N.TEMP] <> "" DO
+		BEGIN
+			IF S.SLOT.FREQ.SCORE.CONTROL[1][N.TEMP] <> "" THEN
+				BEGIN 
+					N.SLOT.SCORE.AM.FREQ ~= S.SLOT.FREQ.SCORE.CONTROL[1][N.TEMP] ;
+				END
+			ELSE ! S.SLOT.FREQ.SCORE.CONTROL[1][N.TEMP] 가 없는 경우에는 원래 있던 score 를 다시 담아줌.
+				BEGIN 
+					N.SLOT.SCORE.AM.FREQ := N.SLOT.SCORE.AM.FREQ ;
+				END
+			
+			IF N.SLOT.RADIO.SCORE.PRE.TEMP < N.SLOT.SCORE.AM.FREQ THEN
+				BEGIN
+					S.SLOT.AM.FREQ := S.SLOT.FREQ.VALUE.CONTROL[1][N.TEMP] ;
+					S.SLOT.ID.AM.FREQ := S.SLOT.FREQ.ID.CONTROL[1][N.TEMP] ;
+					S.SLOT.SCORE.AM.FREQ := S.SLOT.FREQ.SCORE.CONTROL[1][N.TEMP] ; ! <AM_FREQ_NUM>\f500 30\f5532\f<CHANNEL_NUMBER>\f930\f7089 올라 왔을 때 두 개의 VALUE 값이 AM 과 XM 주파수 범위에 모두 해당 되므로 SCORE 가 높은 SLOT 을 사용. 이 때 전달하는 SOCRE 는 Base.SlmSlotThresholdRadio 에서 SLOT TAG 별로 SOCRE 를 판단하므로, AM 과 XM 중 겹치는 SLOT 범위에 대한 SOCRE 를 판단하기 위해 여기서 전달할 SCORE 를 저장.
+					N.SLOT.RADIO.SCORE.PRE.TEMP ~= S.SLOT.FREQ.SCORE.CONTROL[1][N.TEMP] ;
+				END
+			ELSE ! N.SLOT.RADIO.SCORE.PRE.TEMP => N.SLOT.SCORE.AM.FREQ
+				BEGIN
+					IF S.SLOT.FREQ.SCORE.CONTROL[1][N.TEMP] <> "" THEN ! ex)S.SLOT.FREQ.VALUE.CONTROL = 990\f9 , S.SLOT.FREQ.SCORE.CONTROL = 5354\f6000
+						BEGIN 
+							S.SLOT.AM.FREQ := S.SLOT.AM.FREQ ;
+							S.SLOT.ID.AM.FREQ := S.SLOT.ID.AM.FREQ ;
+						END
+					ELSE ! S.SLOT.FREQ.SCORE.CONTROL[1][N.TEMP] = "" ex)S.SLOT.FREQ.VALUE.CONTROL = 9\f9\f9 , S.SLOT.FREQ.SCORE.CONTROL = 5354\f\f
+						BEGIN
+							S.SLOT.AM.FREQ := S.SLOT.AM.FREQ + S.SLOT.FREQ.VALUE.CONTROL[1][N.TEMP] ;
+							S.SLOT.ID.AM.FREQ := S.SLOT.ID.AM.FREQ + S.SLOT.FREQ.ID.CONTROL[1][N.TEMP] ;
+						END
+				END
+			N.TEMP := N.TEMP + 1 ;
+		END
+
+	S.SLOT.SCORE.AM.FREQ ~= N.SLOT.RADIO.SCORE.PRE.TEMP ;
+	S.SLOT.RESULT := S.SLOT.AM.FREQ ;
+	S.SLOT.ID := S.SLOT.ID.AM.FREQ ;
+EOP
+
+! "에이엠 <Am_Freq>", "<Am_Freq>" 명령어 처리 프로시저
+JINIE LpProc.AmFrequency ()
+
+	S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K4_2_0_05_A" + " " + S.SLOT.RESULT + " " + "\@S_DIALOG_PROMPT_LID_K4_2_0_05_B" ;
+	S.INNER.PROMPT.SIMPLY.STR := S.SLOT.RESULT + " " + "\@S_DIALOG_PROMPT_LID_S4_2_0_05" ;
+	S.INNER.PROMPT.DISPLY.STR := "" ;
+	N.EXIT.ACTION.TRANSITION := 4005 ;
+	$N.CONTROL.PROCESS.FEEDBACK := @N_FLAG_ON ;
+	$N.TRANSITION.DIALOG := @N_DIALOG_STOP ;
+EOP
+
+! "프리셋 <number>" 명령어 처리 프로시저
+JINIE LpProc.PresetNumber ()
+
+	! FEEDBACK & TRANSITION
+	IF N.AV.CONDITION = 200000 | N.GLOBAL.CONDITION = 200000 | N.AVN.PRESET.STORED.AVAILABLE = 200000 | N.AVN.PRESET.STATE = 200000 | N.AVN.SELECT.SLOT = 200000 | S.AVN.SELECT.SLOT = "200000" THEN
+		BEGIN
+			CALL Common.FeedbackBasicSetting () ;
+		END
+	ELSE
+		BEGIN
+			IF N.AV.CONDITION = 0 THEN
+				BEGIN
+					S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K1_14_04" ;
+					S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S1_14_04" ;
+					S.INNER.PROMPT.DISPLY.STR := "" ;
+					$N.TRANSITION.DIALOG := @N_DIALOG_REPEAT ;
+				END
+			ELSE ! N.AV.CONDITION = 1
+				BEGIN
+					IF N.GLOBAL.CONDITION = 0 THEN
+						BEGIN
+							S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K1_14_03" ;
+							S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S1_14_03" ;
+							S.INNER.PROMPT.DISPLY.STR := "" ;
+							$N.TRANSITION.DIALOG := @N_DIALOG_REPEAT ;
+						END
+					ELSE ! N.GLOBAL.CONDITION = 1
+						BEGIN
+							IF N.AVN.PRESET.STORED.AVAILABLE = 0 THEN
+								BEGIN
+									S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K4_2_1_24" ;
+									S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S4_2_1_24" ;
+									S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_4_2_1_01" ;
+									$N.TRANSITION.DIALOG := @N_DIALOG_NO_RECOG_EXIT ;
+								END
+							ELSE
+								BEGIN
+									IF N.AVN.PRESET.STATE = 1 THEN
+										BEGIN
+											S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K4_2_1_03" + " " + S.SLOT.FIRST.VALUE + ", " + S.AVN.SELECT.SLOT ;
+											S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S4_2_1_03" + " " + S.SLOT.FIRST.VALUE ;
+											S.INNER.PROMPT.DISPLY.STR := "" ;
+											$N.CONTROL.PROCESS.FEEDBACK := @N_FLAG_ON ;
+											$N.TRANSITION.DIALOG := @N_DIALOG_STOP ;
+											
+											IF N.AVN.SELECT.SLOT = 1 THEN ! FM
+												BEGIN
+													N.EXIT.ACTION.TRANSITION := 1003 ;
+												END
+											ELSE ! AM
+												BEGIN
+													N.EXIT.ACTION.TRANSITION := 4004 ;
+												END
+										END
+									ELSE
+										BEGIN
+											IF $N.STATUS.DIALOG = @N_DIALOG_MAINMENU_RADIO_PRESET THEN
+												BEGIN
+													S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K1_14_01" ;
+													S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S1_14_01" ;
+													S.INNER.PROMPT.DISPLY.STR := "" ;
+													$N.TRANSITION.DIALOG := @N_DIALOG_REPEAT ;
+												END
+											ELSE
+												BEGIN
+													S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K1_14_01" ;
+													S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S1_14_01" ;
+													S.INNER.PROMPT.DISPLY.STR := "" ;
+													$N.TRANSITION.DIALOG := @N_DIALOG_MAINMENU_RADIO_PRESET ;
+												END
+										END
+								END
+						END
+				END
+		END
+EOP
+
+! [FM(에프엠) <89.1>] 버튼 처리 프로시저
+JINIE LpProc.ManualFm ()
+
+	S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K4_6_2_01" ;
+	S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S4_6_2_01" ;
+	S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_4_7_1_01" ;
+	$N.TRANSITION.DIALOG := @N_DIALOG_MAINMENU_FM_FREQUENCY ;
+EOP
+
+! [AM(에이엠) <1080>] 버튼 처리 프로시저
+JINIE LpProc.ManualAm ()
+
+	S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K4_6_2_02" ;
+	S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S4_6_2_02" ;
+	S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_4_7_1_03" ;
+	$N.TRANSITION.DIALOG := @N_DIALOG_MAINMENU_AM_FREQUENCY ;
+EOP
+
+! [<1~12>번 방송] 버튼 처리 프로시저
+JINIE LpProc.ManualPreset ()
+
+	IF N.AVN.PRESET.STORED.AVAILABLE = 200000 THEN
+		BEGIN
+			CALL Common.FeedbackBasicSetting () ;
+		END
+	ELSE
+		BEGIN
+			IF N.AVN.PRESET.STORED.AVAILABLE = 0 THEN
+				BEGIN
+					S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K4_2_1_24" ;
+					S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S4_2_1_24" ;
+					S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_4_2_1_01" ;
+					$N.TRANSITION.DIALOG := @N_DIALOG_NO_RECOG_EXIT ;
+				END
+			ELSE
+				BEGIN
+					S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K4_7_2_01" ;
+					S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S4_7_2_01" ;
+					S.INNER.PROMPT.DISPLY.STR := "" ;
+					$N.TRANSITION.DIALOG := @N_DIALOG_MAINMENU_RADIO_PRESET ;
+				END
+		END
+EOP

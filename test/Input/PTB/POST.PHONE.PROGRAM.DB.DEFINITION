@@ -1,0 +1,1172 @@
+﻿JINIE Post.PhoneMain ()
+
+	! CHECK MULTI-MODAL INTERRUPT
+	CALL Common.CheckInterrupt () ;
+	
+	IF ( $N.STATUS.PROCESS = @N_PROCESS_RULE & $N.STATUS.PROGRAM = @N_FLAG_ON & $N.INTERRUPT.TYPE = 0 ) |
+		( $N.STATUS.PROCESS = @N_PROCESS_RULE & $N.STATUS.PROGRAM = @N_FLAG_ON & $N.INTERRUPT.TYPE = 4 ) THEN
+		BEGIN
+			! CONTROL PROCESS & PROGRAM
+			CALL Common.ControlPost () ;
+			
+			! SET REFERENCE DB & REFERENCE KEY
+			IF $N.INTERRUPT.TYPE = 4 THEN
+				BEGIN
+					N.REF.DB := @N_REFERENCE_INFO ;
+					N.REF.ID := 1 ;
+					S.REF.KEY := "" ;
+					
+					CALL Common.ReferenceKey (N.REF.DB, N.REF.ID, S.REF.KEY) ;
+				END
+			ELSE
+				BEGIN
+					N.SCORE.INTENTION.LIMIT ~= $S.STT.RESULT.INTENTION[1][2]; !INTENT LIMITED : ex) Search/f5600 /n 
+					S.INTENT.VALUE := $S.STT.RESULT.INTENTION[1][1] ; ! INTENTION SAVED
+					
+					! SLOT EXTRACTING BY INTENTION
+					IF ( N.SCORE.INTENTION.LIMIT > N.SCORE.INTENTION.REJECTION.VALUE ) & ( $S.STT.RESULT.INTENTION[1][1] <> "Unsupported" ) THEN
+						BEGIN
+							IF $S.STT.RESULT.SLOT[1][1] <> "" THEN ! CONTACTNAME or PHONETYPE SLOT EXIST
+								BEGIN
+									IF $S.RULE.LEXEMES[1][2] = "\@N_LEXEME_CALL" THEN
+										BEGIN
+											IF N.BT.PATTERN.MODE = 0 THEN ! 4-PATTERN : SINGLE/FULL_FIRST/REVERSE_LAST
+												BEGIN
+													S.SLOT.TEMP := "<SLOT_CONTACT_SINGLE>" + "\n" + "<SLOT_CONTACT_FULL_FIRST>" + "\n" + "<SLOT_CONTACT_REVERSE_LAST>" + "\n" + "<SLOT_PHONETYPE>" ;
+												END
+											ELSE ! N.BT.PATTERN.MODE = 1 2-PATTERN : SINGLE/FULL_FIRST
+												BEGIN
+													S.SLOT.TEMP := "<SLOT_CONTACT_SINGLE>" + "\n" + "<SLOT_CONTACT_FULL_FIRST>"+ "\n" + "<SLOT_PHONETYPE>" ;
+												END
+												
+											CALL Common.SlmIntentionThresholdNbest ( S.SLOT.TEMP ) ;
+											CALL Common.SlmSlotThresholdNbest () ;
+										END
+										
+									IF $S.RULE.LEXEMES[1][2] = "\@N_LEXEME_PHONE_DIAL_NUMBER" THEN
+										BEGIN
+											S.SLOT.TEMP := "<SLOT_VAD_NUM_SLOT>" ;
+											
+											CALL Common.SlmIntentionThresholdOneBest ( S.SLOT.TEMP ) ;
+											CALL Common.SlmSlotThresholdOneBest () ;
+											
+											S.SLOT.FIRST.SCORE := S.SLOT.SCORE.VAD.NUM ;
+										END
+								END
+								
+							IF $S.RULE.LEXEMES[1][2] = "\@N_LEXEME_CALL" & S.SLOT.CONTACTNAME[1] <> "" THEN ! CALL <SLOT_CONTACTNAME>, <SLOT_CONTACTNAME>
+								BEGIN ! VAD SCENARIO : NOT USE REFERENCE DB
+									CALL LpProc.DeduplicateName () ;
+								END
+							ELSE
+								BEGIN
+									IF $S.RULE.LEXEMES[1][2] = "\@N_LEXEME_PHONE_DIAL_NUMBER" & S.SLOT.VAD.NUM <> "" THEN ! DIAL <SLOT_VAD_NUM>, <SLOT_VAD_NUM>
+										BEGIN
+											CALL LpProc.VadNumSlotCount () ; ! 인식 된 DIAL NUMBER 개수
+											
+											S.SLOT.FIRST.ID := S.SLOT.ID.VAD.NUM ;
+											S.SLOT.FIRST.TAG := S.SLOT.TAG.VAD.NUM ; ! SLOT1 TAG SAVED
+										END
+										
+									N.REF.DB := @N_REFERENCE_INFO ;
+									N.REF.ID := 11 ;
+									S.REF.KEY := S.INTENT.VALUE + S.SLOT.FIRST.TAG + S.SLOT.SECOND.TAG + S.SLOT.THIRD.TAG ;
+									
+									CALL Common.ReferenceKey (N.REF.DB, N.REF.ID, S.REF.KEY) ;
+								END
+						END
+					ELSE
+						BEGIN
+							CALL Post.Garbage ();
+						END
+				END
+		END
+		
+	IF ( $N.STATUS.PROCESS = @N_PROCESS_RESULT & $N.STATUS.PROGRAM = @N_FLAG_ON & $N.INTERRUPT.TYPE = 0 ) |
+		( $N.STATUS.PROCESS = @N_PROCESS_RESULT & $N.STATUS.PROGRAM = @N_FLAG_ON & $N.INTERRUPT.TYPE = 4 ) THEN
+		BEGIN
+			! ART
+			CALL Common.ARTIntentionSetting () ;
+			
+			IF $S.RULE.LEXEMES[1][2] = "\@N_LEXEME_CALL" & S.SLOT.TAG.CONTACTNAME[1] <> "" THEN ! CALL <NAME>, CALL <NAME><CATEGORY>, <NAME>
+				BEGIN ! VAD RESULT IN REFERENCE PROCESS
+					CALL LpProc.VadReferenceProcess () ;
+				END
+			ELSE 
+				BEGIN
+					! GET 1-Best Result From Reference DB
+					CALL Common.ReferenceOneBestResult () ;
+				END
+				
+			! SET ACTION-VALUE
+			CALL Common.SetActionValue () ;
+			
+			! SET RULE-TAG
+			CALL Common.SetPreRuleTag () ;
+			
+			! SYSTEM CALL
+			N.CID ~= S.RESULT.FIX.CID ;
+			CALL Common.SystemCallPost (N.CID) ;
+			
+			! CALL LP PROCEDURE
+			IF S.RESULT.FIX.CID = "\@N_TAG_PHONE_CALL_ID" THEN
+				BEGIN
+					CALL LpProc.PhoneCall () ;
+				END
+				
+			IF S.RESULT.FIX.CID = "\@N_TAG_VAD_CALL_ID" THEN
+				BEGIN
+					CALL LpProc.VadCall () ;
+				END
+				
+			IF S.RESULT.FIX.CID = "\@N_TAG_NAME_ID" THEN
+				BEGIN
+					CALL LpProc.Name () ;
+				END
+				
+			IF S.RESULT.FIX.CID = "\@N_TAG_PHONE_DIAL_ID" THEN
+				BEGIN
+					CALL LpProc.PhoneDial () ;
+				END
+				
+			IF S.RESULT.FIX.CID = "\@N_TAG_NAVI_DIAL_ID" THEN
+				BEGIN
+					CALL LpProc.NaviDial () ;
+				END
+				
+			IF S.RESULT.FIX.CID = "\@N_TAG_PHONE_MOBILE_ID" THEN
+				BEGIN
+					CALL LpProc.PhoneMobile () ;
+				END
+				
+			IF S.RESULT.FIX.CID = "\@N_TAG_PHONE_OFFICE_ID" THEN
+				BEGIN
+					CALL LpProc.PhoneOffice () ;
+				END
+				
+			IF S.RESULT.FIX.CID = "\@N_TAG_PHONE_HOME_ID" THEN
+				BEGIN
+					CALL LpProc.PhoneHome () ;
+				END
+				
+			IF S.RESULT.FIX.CID = "\@N_TAG_PHONE_OTHER_ID" THEN
+				BEGIN
+					CALL LpProc.PhoneOther () ;
+				END
+				
+			IF S.RESULT.FIX.CID = "\@N_TAG_MANUAL_VAD_MOBILE_ID" | S.RESULT.FIX.CID = "\@N_TAG_MANUAL_VAD_OFFICE_ID" | 
+			S.RESULT.FIX.CID = "\@N_TAG_MANUAL_VAD_HOME_ID" | S.RESULT.FIX.CID = "\@N_TAG_MANUAL_VAD_OTHER_ID" THEN
+				BEGIN
+					CALL LpProc.CallManualCategory () ;
+				END
+				
+			IF S.RESULT.FIX.CID = "\@N_TAG_PHONE_DIAL_NUMBER_ID" THEN
+				BEGIN
+					CALL LpProc.PhoneDialNumber () ;
+				END
+				
+			IF S.RESULT.FIX.CID = "\@N_TAG_VAD_NUMBER_ID" THEN
+				BEGIN
+					CALL LpProc.VadNumber () ;
+				END
+				
+			IF S.RESULT.FIX.CID = "\@N_TAG_VAD_NUM_SLOT_ID" THEN
+				BEGIN
+					CALL LpProc.VadNumSlot () ;
+				END
+				
+			IF S.RESULT.FIX.CID = "\@N_TAG_PHONE_CORRECTION_ID" THEN
+				BEGIN
+					CALL LpProc.PhoneCorrection () ;
+				END
+				
+			IF S.RESULT.FIX.CID = "\@N_TAG_PHONE_DELETE_ID" THEN
+				BEGIN
+					CALL LpProc.PhoneDelete () ;
+				END
+				
+			! REPEAT CONTROL
+			CALL Common.RepeatControl () ;
+			
+			! FEEDBACK PROMPT CONTROL
+			CALL Common.FeedbackPromptControl () ;
+			
+			! ON SCREEN TEXT
+			CALL Common.FeedbackOnScreenText () ;
+		END
+		
+	IF $N.STATUS.PROCESS = @N_PROCESS_TRANSITION & $N.STATUS.PROGRAM = @N_FLAG_ON THEN
+		BEGIN
+			! VR 종료 후, MAINMENU Dialog 진입 시 정상 Prompt 출력을 위하여 초기화
+			IF $N.TRANSITION.DIALOG = @N_DIALOG_STOP | $N.TRANSITION.DIALOG = @N_DIALOG_EXIT THEN
+				BEGIN
+					S.RESULT.FIX.CID := "" ;
+				END
+		END
+EOP
+
+! "전화 걸기" 명령어 처리 프로시저
+JINIE LpProc.PhoneCall ()
+
+	IF N.BT.DEVICE.PAIRED = 200000 | N.BT.DEVICE.CONNECT = 200000 | N.BT.PHONE.CONNECT = 200000 |
+	N.BT.CONTACT.NUMBER = 200000 | N.BT.DP.BUSY = 200000 | N.BT.DP.NUMBER = 200000 | N.BT.PHONEBOOK.DOWNLOADABLE = 200000 | N.SYSTEM.DRIVING = 200000 THEN
+		BEGIN
+			CALL Common.FeedbackBasicSetting () ;
+		END
+	ELSE
+		BEGIN
+			IF N.BT.DEVICE.CONNECT = 2 | N.BT.DEVICE.PAIRED = 2 THEN ! Bluetooth device connect check 2: connecting / 2:pairing
+				BEGIN
+					S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_1_0_15" ;
+					S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_1_0_15" ;
+					S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_2_1_08" ;
+					$N.TRANSITION.DIALOG := @N_DIALOG_NO_RECOG_EXIT ;
+				END
+			ELSE
+				BEGIN
+					IF N.BT.DEVICE.CONNECT = 1 & N.BT.PHONE.CONNECT = 1 THEN
+						BEGIN
+							IF N.BT.CONTACT.NUMBER > 0 & N.BT.DP.NUMBER > 0 THEN ! PREPHONEBOOK LOAD
+								BEGIN
+									S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_2_01" ;
+									S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_2_01" ;
+									S.INNER.PROMPT.DISPLY.STR := "" ;
+									$N.TRANSITION.DIALOG := @N_DIALOG_BT_VAD ;
+								END
+							ELSE ! PREPHONEBOOK NOT EXIST
+								BEGIN
+									IF N.BT.CONTACT.NUMBER > 0 THEN
+										BEGIN
+											IF N.BT.DP.BUSY = 2 THEN
+												BEGIN
+													IF N.BT.DP.NUMBER > 0 THEN
+														BEGIN
+															S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_2_01" ;
+															S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_2_01" ;
+															S.INNER.PROMPT.DISPLY.STR := "" ;
+															$N.TRANSITION.DIALOG := @N_DIALOG_BT_VAD ;
+														END
+													ELSE ! N.BT.DP.NUMBER <= 0
+														BEGIN
+															S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_1_1_05" ;
+															S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_1_1_05" ;
+															S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_2_1_09" ;
+															N.EXIT.ACTION.TRANSITION := 24001 ;
+															$N.TRANSITION.DIALOG := @N_DIALOG_NO_RECOG_EXIT ;
+														END
+												END
+											ELSE ! N.BT.DP.BUSY = 0 | 1 | 3
+												BEGIN
+													S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_1_1_01" ;
+													S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_1_1_01" ;
+													S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_2_1_03" ;
+													$N.TRANSITION.DIALOG := @N_DIALOG_NO_RECOG_EXIT ;
+												END
+										END
+									ELSE ! N.BT.CONTACT.NUMBER <= 0
+										BEGIN
+											IF N.BT.PHONEBOOK.DOWNLOADABLE = 4 THEN
+												BEGIN
+													S.INNER.PROMPT.KINDLY.STR := "" ;
+													S.INNER.PROMPT.SIMPLY.STR := "" ;
+													S.INNER.PROMPT.DISPLY.STR := "" ;
+													N.EXIT.ACTION.TRANSITION := 24003 ;
+													$N.TRANSITION.DIALOG := @N_DIALOG_STOP ;
+												END
+											ELSE
+												BEGIN
+													IF N.BT.PHONEBOOK.DOWNLOADABLE = 2 | N.BT.DP.BUSY = 1 | N.BT.DP.BUSY = 3 THEN
+														BEGIN
+															S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_1_1_01" ;
+															S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_1_1_01" ;
+															S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_2_1_03" ;
+															$N.TRANSITION.DIALOG := @N_DIALOG_NO_RECOG_EXIT ;
+														END
+													ELSE ! N.BT.PHONEBOOK.DOWNLOADABLE = 0 | 1 | 3
+														BEGIN
+															IF N.BT.PHONEBOOK.DOWNLOADABLE = 0 THEN
+																BEGIN
+																	S.INNER.SCREEN.STRING := "\@S_SCREEN_DIAL_NUMBER_SELECT" ;
+																	S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_1_1_02" ;
+																	S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_1_1_02" ;
+																	S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_2_1_01" ;
+																	$N.TRANSITION.DIALOG := @N_DIALOG_MAINMENU_SELECT ;
+																END
+															ELSE ! N.BT.PHONEBOOK.DOWNLOADABLE = 1 | 3
+																BEGIN
+																	S.INNER.SCREEN.STRING := "\@S_SCREEN_CONTACT_DOWNLOAD_SELECT" ;
+																	S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_1_1_03" ;
+																	S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_1_1_03" ;
+																	S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_2_1_02" ;
+																	$N.TRANSITION.DIALOG := @N_DIALOG_MAINMENU_SELECT ;
+																END
+														END
+												END
+										END
+								END
+						END
+					ELSE ! N.BT.DEVICE.CONNECT = 0 | N.BT.PHONE.CONNECT = 0
+						BEGIN
+							IF N.SYSTEM.DRIVING = 0 | N.BT.DEVICE.PAIRED = 1 THEN ! stop | paired (0-0,0-1,1-1,2-1)
+								BEGIN
+									S.INNER.SCREEN.STRING := "\@S_SCREEN_DEVICE_CONNECT_SELECT" ;
+									S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_1_0_01" ;
+									S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_1_0_01" ;
+									S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_2_1_0_01" ;
+									$N.TRANSITION.DIALOG := @N_DIALOG_MAINMENU_SELECT ;
+								END
+							ELSE ! 1-0,2-0
+								BEGIN
+									S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_1_0_10" ;
+									S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_1_0_10" ;
+									S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_2_1_0_02" ;
+									$N.TRANSITION.DIALOG := @N_DIALOG_NO_RECOG_EXIT ;
+								END
+						END
+				END
+		END
+EOP
+
+! 사람 이름 중복 제거 및 Category 정보 전달 처리 프로시저
+JINIE LpProc.DeduplicateName ()
+
+	TEMPORARY NUMBER N.TEMP := 1 ; ! WHILE COUNT
+	TEMPORARY NUMBER N.INNER.DUPLICATION.COUNT := 0 ; ! DUPLICATION COUNT
+	TEMPORARY NUMBER N.INNER.DUPLICATION.FLAG := 0 ; ! DUPLICATION FLAG
+	TEMPORARY NUMBER N.INNER.STT.RESULT.CONFIDENCE.VALUE := 0 ; ! 인식 어휘에 대한 Confidence 값 저장
+	TEMPORARY NUMBER N.ID := 1 ; ! WHILE COUNT
+	TEMPORARY NUMBER N.CONTACTNAME.COUNT := 0 ; ! CONTACTNAME COUNT
+	
+	WHILE S.SLOT.CONTACTNAME[N.CONTACTNAME.COUNT + 1] <> "" DO
+		BEGIN
+			N.CONTACTNAME.COUNT := N.CONTACTNAME.COUNT + 1 ;
+		END
+		
+	S.INNER.LOG.STRING ~= N.CONTACTNAME.COUNT ;
+	LOG "LP LOG : LpProc.DeduplicateName - N.CONTACTNAME.COUNT = " + S.INNER.LOG.STRING ;
+	
+	WHILE N.TEMP <= N.CONTACTNAME.COUNT DO
+		BEGIN
+			N.INNER.DUPLICATION.FLAG := 0 ;
+			N.INNER.STT.RESULT.CONFIDENCE.VALUE ~= $S.STT.RESULT.SCORE[N.TEMP][1] ; ! 인식어휘에 대한 confidence 값 저장
+			
+			IF S.SLOT.CONTACTNAME[N.TEMP] = "" & S.SLOT.PHONETYPE[N.TEMP] <> "" THEN
+				BEGIN
+					N.TEMP := N.TEMP + 1 ; ! 아무 수행 없이 진행
+				END
+			ELSE
+				BEGIN
+					IF $N.STATUS.DIALOG = @N_DIALOG_BT_VAD THEN
+						BEGIN
+							S.RESULT.CID := "\@N_TAG_NAME_ID" ;
+							S.RESULT.CMD := S.SLOT.CONTACTNAME[1] ;
+							S.RESULT.DIP := "\@S_TAG_VAD_CALL_STRING" ;
+							S.RESULT.SCORE := S.SLOT.SCORE.CONTACTNAME[1] ;
+							
+							S.RESULT.DOMAIN := "SLM" ;
+							S.RESULT.EXAMPLE := "<SLOT_CONTACTNAME>" ;
+							S.RESULT.INTENTION := "Call" ;
+							
+							S.SLOT.FIRST.ID := S.SLOT.ID.CONTACTNAME[N.TEMP] ;
+							S.SLOT.FIRST.TAG := S.SLOT.TAG.CONTACTNAME[N.TEMP] ;
+							S.SLOT.FIRST.VALUE := S.SLOT.CONTACTNAME[N.TEMP] ;
+							S.SLOT.FIRST.SCORE := S.SLOT.SCORE.CONTACTNAME[N.TEMP] ;
+						END
+					ELSE ! MAINMENU, MAINMENU_HELP_PHONE
+						BEGIN
+							S.RESULT.CID := "\@N_TAG_VAD_CALL_ID" ;
+							S.RESULT.CMD := S.SLOT.CONTACTNAME[1] ;
+							S.RESULT.DIP := "\@S_TAG_VAD_CALL_STRING" ;
+							S.RESULT.SCORE := S.SLOT.SCORE.CONTACTNAME[1] ;
+							
+							S.RESULT.DOMAIN := "SLM" ;
+							S.RESULT.EXAMPLE := "Call<SLOT_CONTACTNAME>" ;
+							S.RESULT.INTENTION := "Call" ;
+							
+							S.SLOT.FIRST.ID := S.SLOT.ID.CONTACTNAME[N.TEMP] ;
+							S.SLOT.FIRST.TAG := S.SLOT.TAG.CONTACTNAME[N.TEMP] ;
+							S.SLOT.FIRST.VALUE := S.SLOT.CONTACTNAME[N.TEMP] ;
+							S.SLOT.FIRST.SCORE := S.SLOT.SCORE.CONTACTNAME[N.TEMP] ;
+						END
+						
+					IF S.SLOT.PHONETYPE[N.TEMP] <> "" THEN
+						BEGIN
+							S.RESULT.EXAMPLE := "Call<SLOT_CONTACTNAME><SLOT_PHONETYPE>" ;
+							
+							S.SLOT.SECOND.ID := S.SLOT.ID.PHONETYPE[N.TEMP] ;
+							S.SLOT.SECOND.TAG := S.SLOT.TAG.PHONETYPE[N.TEMP] ;
+							S.SLOT.SECOND.VALUE := S.SLOT.PHONETYPE[N.TEMP] ;
+							S.SLOT.SECOND.SCORE := S.SLOT.SCORE.PHONETYPE[N.TEMP] ;
+						END
+					ELSE
+						BEGIN
+							! N-BEST가 [<이름>에게 전화] 일 때, 카테고리 정보 초기화
+							S.RESULT.EXAMPLE := "Call<SLOT_CONTACTNAME>" ;
+							
+							S.SLOT.SECOND.ID    := "" ;
+							S.SLOT.SECOND.TAG   := "" ;
+							S.SLOT.SECOND.VALUE := "" ;
+							S.SLOT.SECOND.SCORE := "" ;
+						END
+						
+					S.SLOT.THIRD.TAG := "_" ;
+					
+					IF S.SLOT.FIRST.TAG = "<SLOT_CONTACT_SINGLE>" | S.SLOT.FIRST.TAG = "<SLOT_CONTACT_FULL_FIRST>" | S.SLOT.FIRST.TAG = "<SLOT_CONTACT_REVERSE_LAST>" THEN 
+						BEGIN
+							IF N.TEMP = 1 THEN ! 첫 번째 내용 저장
+								BEGIN
+									CALL Common.SetActionString () ;
+									
+									S.RESULT.FIX.CID := S.RESULT.CID ; ! COMMAND ID
+									S.RESULT.FIX.CMD := S.RESULT.CMD ; ! COMMAND
+									S.RESULT.FIX.DIP := S.RESULT.DIP ; ! SCREEN_TEXT
+									S.RESULT.FIX.SCORE := S.RESULT.SCORE ; ! SCORE
+								END
+							ELSE ! 중복 체크
+								BEGIN
+									N.INNER.DUPLICATION.COUNT := N.TEMP - 1 ; ! 현재 Slot String과 이전에 저장 된 Slot String과 비교하기 위하여 N.TEMP - 1 저장
+									
+									WHILE 1 <= N.INNER.DUPLICATION.COUNT DO ! 첫 번째 저장 내용 까지 확인
+										BEGIN
+											IF S.ACTION.STRING[N.INNER.DUPLICATION.COUNT][6] = S.SLOT.FIRST.VALUE THEN ! 사람 이름 중복 확인
+												BEGIN
+													N.INNER.DUPLICATION.FLAG := 1 ; ! 중복 시 Flag 값 저장
+												END
+											N.INNER.DUPLICATION.COUNT := N.INNER.DUPLICATION.COUNT - 1 ; ! 다음 확인을 위하여 - 1
+										END
+										
+									IF N.INNER.DUPLICATION.FLAG = 0 THEN ! 중복 되지 않을 때
+										BEGIN
+											CALL Common.SetActionString () ;
+										END
+								END
+						END
+						
+					N.TEMP := N.TEMP + 1 ;
+				END
+		END
+		
+	S.BT.ACTION.TEMP := S.ACTION.STRING ;
+	LOG "LP LOG : LpProc.DeduplicateName - S.BT.ACTION.TEMP = " + S.BT.ACTION.TEMP ;
+	
+	MESSAGE "(REFERENCE) \fS.BT.ACTION.TEMP" ;
+EOP
+
+! LP, VRM 사람 이름 중복 처리 결과에서 Threshold 확인 후 Action String 재 전달 처리 프로시저
+JINIE LpProc.VadReferenceProcess ()
+
+	LOG "LP LOG : LpProc.VadReferenceProcess - S.BT.ACTION.TEMP = " + S.BT.ACTION.TEMP ;
+
+	! VRM 동일 인물 중복 제거 결과 저장
+	IF N.BT.NBESTLIST.NUMBER = 1 THEN
+		BEGIN
+			N.INNER.CONFIDENCE.FIRST.VALUE ~= S.BT.ACTION.TEMP[1][7] ;
+		END
+	ELSE
+		BEGIN
+			N.INNER.CONFIDENCE.FIRST.VALUE ~= S.BT.ACTION.TEMP[1][7] ;
+			N.INNER.CONFIDENCE.SECOND.VALUE ~= S.BT.ACTION.TEMP[2][7] ;
+		END
+	N.INNER.CONFIDENCE.GAP.VALUE := N.INNER.CONFIDENCE.FIRST.VALUE - N.INNER.CONFIDENCE.SECOND.VALUE ;
+	
+	IF N.INNER.CONFIDENCE.GAP.VALUE >= $N.STT.RESULT.CONTROL.THRESHOLD.UTTERANCE.GAP THEN
+		BEGIN
+			N.RESULT.CONUT.NUM := 1 ;
+			S.ACTION.STRING := S.BT.ACTION.TEMP[1] ;
+		END
+	ELSE
+		BEGIN
+			N.RESULT.CONUT.NUM := N.BT.NBESTLIST.NUMBER ;
+			S.ACTION.STRING := S.BT.ACTION.TEMP ;
+		END
+	
+	S.INNER.LOG.STRING ~= N.BT.NBESTLIST.NUMBER ;
+	LOG "LP LOG : LpProc.VadReferenceProcess - N.BT.NBESTLIST.NUMBER = " + S.INNER.LOG.STRING ;
+	S.INNER.LOG.STRING ~= N.INNER.CONFIDENCE.FIRST.VALUE ;
+	LOG "LP LOG : LpProc.VadReferenceProcess - N.INNER.CONFIDENCE.FIRST.VALUE = " + S.INNER.LOG.STRING ;
+	S.INNER.LOG.STRING ~= N.INNER.CONFIDENCE.SECOND.VALUE ;
+	LOG "LP LOG : LpProc.VadReferenceProcess - N.INNER.CONFIDENCE.SECOND.VALUE = " + S.INNER.LOG.STRING ;
+	S.INNER.LOG.STRING ~= N.INNER.CONFIDENCE.GAP.VALUE ;
+	LOG "LP LOG : LpProc.VadReferenceProcess - N.INNER.CONFIDENCE.GAP.VALUE = " + S.INNER.LOG.STRING ;
+EOP
+
+! "<이름>에게 전화" 명령어 처리 프로시저
+JINIE LpProc.VadCall ()
+
+	IF N.GLOBAL.NBEST.RESULT.NUM = 200000 | N.BT.CATEGORY.NUM = 200000 | N.BT.SELECT.CATEGORY.EXIST = 200000 | N.BT.CATEGORY.NUMBER.NUM = 200000 | S.BT.NAME.SELECT = "200000" | S.BT.NAME.TTS = "200000" | N.BT.NAME.TYPE = 200000 THEN
+		BEGIN
+			CALL Common.FeedbackBasicSetting () ;
+		END
+	ELSE
+		BEGIN
+			! Same list TTS prompt
+			S.GLOBAL.NBEST.RESULT.NUM ~= N.GLOBAL.NBEST.RESULT.NUM ;
+			
+			IF N.GLOBAL.NBEST.RESULT.NUM > 1 THEN
+				BEGIN
+					S.INNER.PROMPT.KINDLY.STR := S.GLOBAL.NBEST.RESULT.NUM + " " + "\@S_DIALOG_PROMPT_LID_K2_2_02" ;
+					S.INNER.PROMPT.SIMPLY.STR := S.GLOBAL.NBEST.RESULT.NUM + " " + "\@S_DIALOG_PROMPT_LID_S2_2_02" ;
+					S.INNER.PROMPT.DISPLY.STR := "" ;
+					$N.TRANSITION.DIALOG := @N_DIALOG_BT_VAD_LIST ;
+				END
+			ELSE
+				BEGIN
+					IF N.BT.NAME.TYPE = 0 THEN ! CALL <NAME>
+						BEGIN
+							IF N.BT.CATEGORY.NUM = 1 THEN
+								BEGIN
+									IF N.INNER.CONFIDENCE.FIRST.VALUE > $N.STT.RESULT.CONTROL.THRESHOLD.UTTERANCE.HIGH THEN
+										BEGIN ! CONFIDENCE : HIGH
+											S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_2_04" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS ;
+											S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_2_04" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS ;
+											S.INNER.PROMPT.DISPLY.STR := "" ;
+											N.EXIT.ACTION.TRANSITION := 24007 ;
+											$N.CONTROL.PROCESS.FEEDBACK   := @N_FLAG_ON ;
+											$N.TRANSITION.DIALOG := @N_DIALOG_STOP ;
+										END
+									ELSE
+										BEGIN ! CONFIDENCE : MID
+											S.INNER.SCREEN.STRING := "\@S_SCREEN_CALL_NAME_SELECT" ;
+											S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_2_09_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + "\@S_DIALOG_PROMPT_LID_K2_2_09_B" ;
+											S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_2_09_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + "\@S_DIALOG_PROMPT_LID_S2_2_09_B" ;
+											S.INNER.PROMPT.DISPLY.STR := "" ;
+											$N.TRANSITION.DIALOG := @N_DIALOG_MAINMENU_SELECT ;
+										END
+								END
+							ELSE ! N.BT.CATEGORY.NUM > 1
+								BEGIN
+									S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_2_03" ;
+									S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_2_03" ;
+									S.INNER.PROMPT.DISPLY.STR := "" ;
+									$N.TRANSITION.DIALOG := @N_DIALOG_BT_VAD_CATEGORY ;
+								END
+						END
+					ELSE ! CALL <NAME><CATEGORY>
+						BEGIN
+							IF N.BT.SELECT.CATEGORY.EXIST = 1 & N.BT.CATEGORY.NUMBER.NUM = 1 THEN
+								BEGIN
+									IF N.INNER.CONFIDENCE.FIRST.VALUE > $N.STT.RESULT.CONTROL.THRESHOLD.UTTERANCE.HIGH THEN
+										BEGIN ! CONFIDENCE : HIGH
+											IF N.BT.NAME.TYPE = 1 THEN ! MOBILE
+												BEGIN
+													S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_2_05_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_K2_2_05_B" ;
+													S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_2_05_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_S2_2_05_B" ;
+												END
+											IF N.BT.NAME.TYPE = 2 THEN ! OFFICE
+												BEGIN
+													S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_2_07_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_K2_2_07_B" ;
+													S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_2_07_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_S2_2_07_B" ;
+												END
+											IF N.BT.NAME.TYPE = 3 THEN ! HOME
+												BEGIN
+													S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_2_06_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_K2_2_06_B" ;
+													S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_2_06_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_S2_2_06_B" ;
+												END
+											IF N.BT.NAME.TYPE = 4 THEN ! OTHER
+												BEGIN
+													S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_2_08_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_K2_2_08_B" ;
+													S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_2_08_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_S2_2_08_B" ;
+												END
+											S.INNER.PROMPT.DISPLY.STR := "" ;
+											N.EXIT.ACTION.TRANSITION := 24007 ;
+											$N.CONTROL.PROCESS.FEEDBACK   := @N_FLAG_ON ;
+											$N.TRANSITION.DIALOG := @N_DIALOG_STOP ;
+										END
+									ELSE
+										BEGIN	! CONFIDENCE : MID
+											S.INNER.SCREEN.STRING := "\@S_SCREEN_CALL_NAME_SELECT" ;
+											
+											IF N.BT.NAME.TYPE = 1 THEN ! MOBILE
+												BEGIN
+													S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_2_10_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_K2_2_10_B" ;
+													S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_2_10_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_S2_2_10_B" ;
+												END
+											IF N.BT.NAME.TYPE = 2 THEN ! OFFICE
+												BEGIN
+													S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_2_12_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_K2_2_12_B" ;
+													S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_2_12_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_S2_2_12_B" ;
+												END
+											IF N.BT.NAME.TYPE = 3 THEN ! HOME
+												BEGIN
+													S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_2_11_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_K2_2_11_B" ;
+													S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_2_11_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_S2_2_11_B" ;
+												END
+											IF N.BT.NAME.TYPE = 4 THEN ! OTHER
+												BEGIN
+													S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_2_13_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_K2_2_13_B" ;
+													S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_2_13_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_S2_2_13_B" ;
+												END
+											S.INNER.PROMPT.DISPLY.STR := "" ;
+											$N.TRANSITION.DIALOG := @N_DIALOG_MAINMENU_SELECT ;
+										END
+								END
+							ELSE
+								BEGIN
+									IF N.BT.SELECT.CATEGORY.EXIST = 1 THEN
+										BEGIN
+											S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_2_03" ;
+											S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_2_03" ;
+											S.INNER.PROMPT.DISPLY.STR := "" ;
+											$N.TRANSITION.DIALOG := @N_DIALOG_BT_VAD_CATEGORY_NUM ;
+										END
+									ELSE
+										BEGIN
+											IF N.BT.NAME.TYPE = 1 THEN ! MOBILE
+												BEGIN
+													S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_3_01_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + ". " + "\@S_DIALOG_PROMPT_LID_K2_3_01_B" ;
+													S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_3_01_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + ". " + "\@S_DIALOG_PROMPT_LID_S2_3_01_B" ;
+												END
+											IF N.BT.NAME.TYPE = 2 THEN ! OFFICE
+												BEGIN
+													S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_3_03_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + ". " + "\@S_DIALOG_PROMPT_LID_K2_3_03_B" ;
+													S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_3_03_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + ". " + "\@S_DIALOG_PROMPT_LID_S2_3_03_B" ;
+												END
+											IF N.BT.NAME.TYPE = 3 THEN ! HOME
+												BEGIN
+													S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_3_02_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + ". " + "\@S_DIALOG_PROMPT_LID_K2_3_02_B" ;
+													S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_3_02_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + ". " + "\@S_DIALOG_PROMPT_LID_S2_3_02_B" ;
+												END
+											IF N.BT.NAME.TYPE = 4 THEN ! OTHER
+												BEGIN
+													S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_3_04_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + ". " + "\@S_DIALOG_PROMPT_LID_K2_3_04_B" ;
+													S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_3_04_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + ". " + "\@S_DIALOG_PROMPT_LID_S2_3_04_B" ;
+												END
+											S.INNER.PROMPT.DISPLY.STR := "" ;
+											$N.TRANSITION.DIALOG := @N_DIALOG_BT_VAD_CATEGORY ;
+										END
+								END
+						END
+				END
+		END
+EOP
+
+! "<이름>" 명령어 처리 프로시저
+JINIE LpProc.Name ()
+	
+	IF N.GLOBAL.NBEST.RESULT.NUM = 200000 | N.BT.CATEGORY.NUM = 200000 THEN
+		BEGIN
+			CALL Common.FeedbackBasicSetting () ;
+		END
+	ELSE
+		BEGIN
+			! Same list TTS prompt
+			S.GLOBAL.NBEST.RESULT.NUM ~= N.GLOBAL.NBEST.RESULT.NUM ;
+			
+			IF $S.RESULT.ID[1][1] = "190000" THEN ! multimodal
+				BEGIN
+					IF N.BT.CATEGORY.NUM = 1 THEN
+						BEGIN
+							S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_2_04" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS ;
+							S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_2_04" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS ;
+							S.INNER.PROMPT.DISPLY.STR := "" ;
+							N.EXIT.ACTION.TRANSITION := 24007 ;
+							$N.CONTROL.PROCESS.FEEDBACK := @N_FLAG_ON ;
+							$N.TRANSITION.DIALOG := @N_DIALOG_STOP ;
+						END
+					ELSE ! N.BT.CATEGORY.NUM > 1
+						BEGIN
+							S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_2_03" ;
+							S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_2_03" ;
+							S.INNER.PROMPT.DISPLY.STR := "" ;
+							$N.TRANSITION.DIALOG := @N_DIALOG_BT_VAD_CATEGORY ;
+						END
+				END
+			ELSE ! 인식
+				BEGIN
+					IF N.GLOBAL.NBEST.RESULT.NUM > 1 THEN
+						BEGIN
+							S.INNER.PROMPT.KINDLY.STR := S.GLOBAL.NBEST.RESULT.NUM + " " + "\@S_DIALOG_PROMPT_LID_K2_2_02" ;
+							S.INNER.PROMPT.SIMPLY.STR := S.GLOBAL.NBEST.RESULT.NUM + " " + "\@S_DIALOG_PROMPT_LID_S2_2_02" ;
+							S.INNER.PROMPT.DISPLY.STR := "" ;
+							$N.TRANSITION.DIALOG := @N_DIALOG_BT_VAD_LIST ;
+						END
+					ELSE
+						BEGIN
+							IF N.BT.CATEGORY.NUM = 1 THEN
+								BEGIN
+									IF N.INNER.CONFIDENCE.FIRST.VALUE > $N.STT.RESULT.CONTROL.THRESHOLD.UTTERANCE.HIGH THEN
+										BEGIN ! CONFIDENCE : HIGH
+											S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_2_04" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS ;
+											S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_2_04" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS ;
+											S.INNER.PROMPT.DISPLY.STR := "" ;
+											N.EXIT.ACTION.TRANSITION := 24007 ;
+											$N.CONTROL.PROCESS.FEEDBACK := @N_FLAG_ON ;
+											$N.TRANSITION.DIALOG := @N_DIALOG_STOP ;
+										END
+									ELSE
+										BEGIN ! CONFIDENCE : MID
+											S.INNER.SCREEN.STRING := "\@S_SCREEN_CALL_NAME_SELECT" ;
+											S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_2_09_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + "\@S_DIALOG_PROMPT_LID_K2_2_09_B" ;
+											S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_2_09_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + "\@S_DIALOG_PROMPT_LID_S2_2_09_B" ;
+											S.INNER.PROMPT.DISPLY.STR := "" ;
+											$N.TRANSITION.DIALOG := @N_DIALOG_MAINMENU_SELECT ;
+										END
+								END
+							ELSE ! N.BT.CATEGORY. NUM > 1
+								BEGIN
+									S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_2_03" ;
+									S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_2_03" ;
+									S.INNER.PROMPT.DISPLY.STR := "" ;
+									$N.TRANSITION.DIALOG := @N_DIALOG_BT_VAD_CATEGORY ;
+								END
+						END
+				END
+		END
+EOP
+
+! "전화 연결" 명령어 처리 프로시저
+JINIE LpProc.NaviDial ()
+
+	IF N.BT.DEVICE.PAIRED = 200000 | N.BT.DEVICE.CONNECT = 200000 | N.BT.PHONE.CONNECT = 200000 | N.SYSTEM.DRIVING = 200000 | N.BT.DEVICE.PAIRED = 200000 THEN
+		BEGIN
+			CALL Common.FeedbackBasicSetting () ;
+		END
+	ELSE
+		BEGIN
+			IF S.PRE.RESULT.FIX.CID = "\@N_TAG_FIND_POI_ID" | S.PRE.RESULT.FIX.CID = "\@N_TAG_FIND_CATEGORY_ID" THEN
+				BEGIN
+					IF N.BT.DEVICE.CONNECT = 2 | N.BT.DEVICE.PAIRED = 2 THEN ! Bluetooth device connect check 2: connecting / 2:pairing
+						BEGIN
+							S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_1_0_15" ;
+							S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_1_0_15" ;
+							S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_2_1_08" ;
+							$N.TRANSITION.DIALOG := @N_DIALOG_NO_RECOG_EXIT ;
+						END
+					ELSE
+						BEGIN
+							IF N.BT.DEVICE.CONNECT = 1 & N.BT.PHONE.CONNECT = 1 THEN
+								BEGIN
+									S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_4_0_04" ;
+									S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_4_0_04" ;
+									S.INNER.PROMPT.DISPLY.STR := "" ;
+									N.EXIT.ACTION.TRANSITION := 19002 ;
+									$N.CONTROL.PROCESS.FEEDBACK := @N_FLAG_ON ;
+									$N.TRANSITION.DIALOG := @N_DIALOG_STOP ;
+								END
+							ELSE ! N.BT.DEVICE.CONNECT = 0 | N.BT.PHONE.CONNECT = 0
+								BEGIN
+									IF N.SYSTEM.DRIVING = 0 | N.BT.DEVICE.PAIRED = 1 THEN ! stop | paired (0-0,0-1,1-1,2-1)
+										BEGIN
+											S.INNER.SCREEN.STRING := "\@S_SCREEN_DEVICE_CONNECT_SELECT" ;
+											S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_1_0_01" ;
+											S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_1_0_01" ;
+											S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_2_1_0_01" ;
+											$N.TRANSITION.DIALOG := @N_DIALOG_MAINMENU_SELECT ;
+										END
+									ELSE ! 1-0,2-0
+										BEGIN
+											S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_1_0_10" ;
+											S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_1_0_10" ;
+											S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_2_1_0_02" ;
+											$N.TRANSITION.DIALOG := @N_DIALOG_NO_RECOG_EXIT ;
+										END
+								END
+						END
+				END
+			ELSE
+				BEGIN
+					IF N.BT.DEVICE.CONNECT = 1 & N.BT.PHONE.CONNECT = 1 THEN
+						BEGIN
+							S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_4_0_04" ;
+							S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_4_0_04" ;
+							S.INNER.PROMPT.DISPLY.STR := "" ;
+							N.EXIT.ACTION.TRANSITION := 19003 ;
+							$N.CONTROL.PROCESS.FEEDBACK := @N_FLAG_ON ;
+							$N.TRANSITION.DIALOG := @N_DIALOG_STOP ;
+						END
+					ELSE ! N.BT.PHONE.CONNECT = 0
+						BEGIN
+							S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_1_0_04" ;
+							S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_1_0_04" ;
+							S.INNER.PROMPT.DISPLY.STR := "" ;
+							$N.TRANSITION.DIALOG := @N_DIALOG_REPEAT ;
+						END
+				END
+		END
+EOP
+
+! "휴대폰" 명령어 처리 프로시저
+JINIE LpProc.PhoneMobile ()
+
+	IF N.BT.SELECT.CATEGORY.EXIST = 200000 | S.BT.NAME.SELECT = "200000" | S.BT.NAME.TTS = "200000" THEN
+		BEGIN
+			CALL Common.FeedbackBasicSetting () ;
+		END
+	ELSE
+		BEGIN
+			IF N.BT.SELECT.CATEGORY.EXIST = 0 THEN
+				BEGIN
+					S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_3_01_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + ". " + "\@S_DIALOG_PROMPT_LID_K2_3_01_B" ;
+					S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_3_01_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + ". " + "\@S_DIALOG_PROMPT_LID_S2_3_01_B" ;
+					S.INNER.PROMPT.DISPLY.STR := "" ;
+					$N.TRANSITION.DIALOG := @N_DIALOG_REPEAT ;
+				END
+			ELSE
+				BEGIN
+					S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_2_05_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_K2_2_05_B" ;
+					S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_2_05_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_S2_2_05_B" ;
+					S.INNER.PROMPT.DISPLY.STR := "" ;
+					N.EXIT.ACTION.TRANSITION := 24007 ;
+					$N.CONTROL.PROCESS.FEEDBACK := @N_FLAG_ON ;
+					$N.TRANSITION.DIALOG := @N_DIALOG_STOP ;
+				END
+		END
+EOP
+
+! "집" 명령어 처리 프로시저
+JINIE LpProc.PhoneHome ()
+
+	IF N.BT.SELECT.CATEGORY.EXIST = 200000 | S.BT.NAME.SELECT = "200000" | S.BT.NAME.TTS = "200000" THEN
+		BEGIN
+			CALL Common.FeedbackBasicSetting () ;
+		END
+	ELSE
+		BEGIN
+			IF N.BT.SELECT.CATEGORY.EXIST = 0 THEN
+				BEGIN
+					S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_3_02_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + ". " + "\@S_DIALOG_PROMPT_LID_K2_3_02_B" ;
+					S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_3_02_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + ". " + "\@S_DIALOG_PROMPT_LID_S2_3_02_B" ;
+					S.INNER.PROMPT.DISPLY.STR := "" ;
+					$N.TRANSITION.DIALOG := @N_DIALOG_REPEAT ;
+				END
+			ELSE
+				BEGIN
+					S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_2_06_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_K2_2_06_B" ;
+					S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_2_06_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_S2_2_06_B" ;
+					S.INNER.PROMPT.DISPLY.STR := "" ;
+					N.EXIT.ACTION.TRANSITION := 24007 ;
+					$N.CONTROL.PROCESS.FEEDBACK := @N_FLAG_ON ;
+					$N.TRANSITION.DIALOG := @N_DIALOG_STOP ;
+				END
+		END
+EOP
+
+! "사무실" 명령어 처리 프로시저
+JINIE LpProc.PhoneOffice ()
+
+	IF N.BT.SELECT.CATEGORY.EXIST = 200000 | S.BT.NAME.SELECT = "200000" | S.BT.NAME.TTS = "200000" THEN
+		BEGIN
+			CALL Common.FeedbackBasicSetting () ;
+		END
+	ELSE
+		BEGIN
+			IF N.BT.SELECT.CATEGORY.EXIST = 0 THEN
+				BEGIN
+					S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_3_03_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + ". " + "\@S_DIALOG_PROMPT_LID_K2_3_03_B" ;
+					S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_3_03_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + ". " + "\@S_DIALOG_PROMPT_LID_S2_3_03_B" ;
+					S.INNER.PROMPT.DISPLY.STR := "" ;
+					$N.TRANSITION.DIALOG := @N_DIALOG_REPEAT ;
+				END
+			ELSE
+				BEGIN
+					S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_2_07_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_K2_2_07_B" ;
+					S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_2_07_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_S2_2_07_B" ;
+					S.INNER.PROMPT.DISPLY.STR := "" ;
+					N.EXIT.ACTION.TRANSITION := 24007 ;
+					$N.CONTROL.PROCESS.FEEDBACK := @N_FLAG_ON ;
+					$N.TRANSITION.DIALOG := @N_DIALOG_STOP ;
+				END
+		END
+EOP
+
+! "기타" 명령어 처리 프로시저
+JINIE LpProc.PhoneOther ()
+
+	IF N.BT.SELECT.CATEGORY.EXIST = 200000 | S.BT.NAME.SELECT = "200000" | S.BT.NAME.TTS = "200000" THEN
+		BEGIN
+			CALL Common.FeedbackBasicSetting () ;
+		END
+	ELSE
+		BEGIN
+			IF N.BT.SELECT.CATEGORY.EXIST = 0 THEN
+				BEGIN
+					S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_3_04_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + ". " + "\@S_DIALOG_PROMPT_LID_K2_3_04_B" ;
+					S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_3_04_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + ". " + "\@S_DIALOG_PROMPT_LID_S2_3_04_B" ;
+					S.INNER.PROMPT.DISPLY.STR := "" ;
+					$N.TRANSITION.DIALOG := @N_DIALOG_REPEAT ;
+				END
+			ELSE
+				BEGIN
+					S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_2_08_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_K2_2_08_B" ;
+					S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_2_08_A" + " " + "\\\\tn=name\\\\" + S.BT.NAME.TTS + "\\\\tn=normal\\\\" + " " + "\@S_DIALOG_PROMPT_LID_S2_2_08_B" ;
+					S.INNER.PROMPT.DISPLY.STR := "" ;
+					N.EXIT.ACTION.TRANSITION := 24007 ;
+					$N.CONTROL.PROCESS.FEEDBACK := @N_FLAG_ON ;
+					$N.TRANSITION.DIALOG := @N_DIALOG_STOP ;
+				END
+		END
+EOP
+
+! [카테고리 아이콘] 버튼 처리 프로시저
+JINIE LpProc.CallManualCategory ()
+
+	IF N.BT.SELECT.CATEGORY.EXIST = 200000 THEN
+		BEGIN
+			CALL Common.FeedbackBasicSetting () ;
+		END
+	ELSE
+		BEGIN
+			S.INNER.PROMPT.KINDLY.STR := "" ;
+			S.INNER.PROMPT.SIMPLY.STR := "" ;
+			S.INNER.PROMPT.DISPLY.STR := "" ;
+			N.EXIT.ACTION.TRANSITION := 24007 ;
+			$N.TRANSITION.DIALOG := @N_DIALOG_STOP ;
+		END
+EOP
+
+! DIAL NUMBER 
+JINIE LpProc.PhoneDialNumber ()
+
+	N.INNER.DIALNUMBER.ONESHOT.FLAG := 0 ;
+	
+	IF N.BT.DEVICE.PAIRED = 200000 | N.BT.DEVICE.CONNECT = 200000 | N.BT.PHONE.CONNECT = 200000 | N.SYSTEM.DRIVING = 200000 THEN
+		BEGIN
+			CALL Common.FeedbackBasicSetting () ;
+		END
+	ELSE
+		BEGIN
+			IF N.BT.DEVICE.CONNECT = 2 | N.BT.DEVICE.PAIRED = 2 THEN
+				BEGIN
+					S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_1_0_15" ;
+					S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_1_0_15" ;
+					S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_2_1_08" ;
+					$N.TRANSITION.DIALOG := @N_DIALOG_NO_RECOG_EXIT ;
+				END
+			ELSE
+				BEGIN
+					IF N.BT.DEVICE.CONNECT = 1 & N.BT.PHONE.CONNECT = 1 THEN ! HFP support check
+						BEGIN
+							S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_4_0_01" ;
+							S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_4_0_01" ;
+							S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_2_4_0_01" ;
+							$N.TRANSITION.DIALOG := @N_DIALOG_BT_VAD_NUM_LOCAL ;
+						END
+					ELSE ! N.BT.DEVICE.CONNECT = 0 | N.BT.PHONE.CONNECT = 0
+						BEGIN
+							IF N.SYSTEM.DRIVING = 0 | N.BT.DEVICE.PAIRED = 1 THEN ! stop | paired (0-0,0-1,1-1,2-1)
+								BEGIN
+									S.INNER.SCREEN.STRING := "\@S_SCREEN_DEVICE_CONNECT_SELECT" ;
+									S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_1_0_01" ;
+									S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_1_0_01" ;
+									S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_2_1_0_01" ;
+									$N.TRANSITION.DIALOG := @N_DIALOG_MAINMENU_SELECT ;
+								END
+							ELSE ! 1-0,2-0
+								BEGIN
+									S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_1_0_10" ;
+									S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_1_0_10" ;
+									S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_2_1_0_02" ;
+									$N.TRANSITION.DIALOG := @N_DIALOG_NO_RECOG_EXIT ;
+								END
+						END
+				END
+		END
+EOP
+
+JINIE LpProc.VadNumber ()
+
+	N.INNER.DIALNUMBER.ONESHOT.FLAG := 1 ;
+	
+	IF N.BT.DEVICE.PAIRED = 200000 | N.BT.DEVICE.CONNECT = 200000 | N.BT.PHONE.CONNECT = 200000 | N.SYSTEM.DRIVING = 200000 THEN
+		BEGIN
+			CALL Common.FeedbackBasicSetting () ;
+		END
+	ELSE
+		BEGIN
+			! Dial number TTS 처리
+			CALL LpProc.VadNumSlotTTS () ;
+			
+			IF N.BT.DEVICE.CONNECT = 2 | N.BT.DEVICE.PAIRED = 2 THEN ! bluetooth device connect check 2: connecting / 2:pairing
+				BEGIN
+					S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_1_0_15" ;
+					S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_1_0_15" ;
+					S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_2_1_08" ;
+					$N.TRANSITION.DIALOG := @N_DIALOG_NO_RECOG_EXIT ;
+				END
+			ELSE
+				BEGIN
+					IF N.BT.DEVICE.CONNECT = 1 & N.BT.PHONE.CONNECT = 1 THEN ! HFP support check
+						BEGIN
+							S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_4_0_03_A" ;
+							S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_4_0_03_A" ;
+							S.INNER.PROMPT.DISPLY.STR := "" ;
+							$N.TRANSITION.DIALOG := @N_DIALOG_BT_VAD_NUM_SELECT ;
+						END
+					ELSE ! N.BT.DEVICE.CONNECT = 0 | N.BT.PHONE.CONNECT = 0
+						BEGIN
+							IF N.SYSTEM.DRIVING = 0 | N.BT.DEVICE.PAIRED = 1 THEN ! stop | paired (0-0,0-1,1-1,2-1)
+								BEGIN
+									S.INNER.SCREEN.STRING := "\@S_SCREEN_DEVICE_CONNECT_SELECT" ;
+									S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_1_0_01" ;
+									S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_1_0_01" ;
+									S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_2_1_0_01" ;
+									$N.TRANSITION.DIALOG := @N_DIALOG_MAINMENU_SELECT ;
+								END
+							ELSE ! 1-0,2-0
+								BEGIN
+									S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_1_0_10" ;
+									S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_1_0_10" ;
+									S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_2_1_0_02" ;
+									$N.TRANSITION.DIALOG := @N_DIALOG_NO_RECOG_EXIT ;
+								END
+						END
+				END
+		END
+	
+EOP
+
+JINIE LpProc.VadNumSlot ()
+	
+	! Dial number TTS 처리
+	CALL LpProc.VadNumSlotTTS () ;
+	
+	S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_4_0_03_A" ;
+	S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_4_0_03_A" ;
+	S.INNER.PROMPT.DISPLY.STR := "" ;
+	$N.TRANSITION.DIALOG := @N_DIALOG_BT_VAD_NUM_SELECT ;
+EOP
+
+JINIE LpProc.PhoneDial ()
+
+	S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_4_0_04" ;
+	S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_4_0_04" ;
+	S.INNER.PROMPT.DISPLY.STR := "" ;
+	N.EXIT.ACTION.TRANSITION := 25008 ;
+	$N.CONTROL.PROCESS.FEEDBACK := @N_FLAG_ON ;
+	$N.TRANSITION.DIALOG := @N_DIALOG_STOP ;
+EOP
+
+JINIE LpProc.PhoneCorrection ()
+	
+	IF N.BT.DIALNUMBER.EXIST = 200000 THEN
+		BEGIN
+			CALL Common.FeedbackBasicSetting () ;
+		END
+	ELSE
+		BEGIN
+			! Dial number TTS 처리
+			CALL LpProc.VadNumSlotTTS () ;
+			
+			IF N.BT.DIALNUMBER.EXIST = 0 THEN
+				BEGIN
+					S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_4_0_02" ;
+					S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_4_0_02" ;
+					S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_2_4_0_01" ;
+					
+					IF N.INNER.DIALNUMBER.ONESHOT.FLAG = 1 THEN
+						BEGIN
+							$N.TRANSITION.DIALOG := @N_DIALOG_BT_VAD_NUM_LOCAL ;
+						END
+					ELSE
+						BEGIN
+							$N.TRANSITION.DIALOG := @N_DIALOG_BACK ;
+						END
+				END
+			ELSE
+				BEGIN
+					S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_4_0_03_A" + " " + S.BT.DIALNUMBER.PROMPT.STR + "\@S_DIALOG_PROMPT_LID_K2_4_0_03_B" + " " + "\@S_DIALOG_PROMPT_LID_K2_4_0_03_C" ;
+					S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_4_0_03_A" + " " + S.BT.DIALNUMBER.PROMPT.STR + "\@S_DIALOG_PROMPT_LID_S2_4_0_03_B" ;
+					S.INNER.PROMPT.DISPLY.STR := "" ;
+					$N.TRANSITION.DIALOG := @N_DIALOG_REPEAT ;
+				END
+		END
+EOP
+
+JINIE LpProc.PhoneDelete ()
+	
+	S.INNER.PROMPT.KINDLY.STR := "\@S_DIALOG_PROMPT_LID_K2_4_0_02" ;
+	S.INNER.PROMPT.SIMPLY.STR := "\@S_DIALOG_PROMPT_LID_S2_4_0_02" ;
+	S.INNER.PROMPT.DISPLY.STR := "\@S_SCREEN_PROMPT_LID_2_4_0_01" ;
+	
+	IF N.INNER.DIALNUMBER.ONESHOT.FLAG = 1 THEN
+		BEGIN
+			$N.TRANSITION.DIALOG := @N_DIALOG_BT_VAD_NUM_LOCAL ;
+		END
+	ELSE
+		BEGIN
+			$N.TRANSITION.DIALOG := @N_DIALOG_BACK ;
+		END
+EOP
+
+
+JINIE LpProc.VadNumSlotCount ()
+
+	TEMPORARY NUMBER N.TEMP := 1 ;
+	TEMPORARY NUMBER N.TEMP.STRING := 0 ;
+	TEMPORARY STRING S.TEMP.SLOT.RESULT := "" ;
+	S.SLOT.RESULT := "" ;
+	
+	! 인식 된 DIAL NUMBER 개수
+	WHILE $S.RESULT.ID[1][N.TEMP] <> ""	DO
+		BEGIN
+			IF $S.RESULT.ID[1][N.TEMP] = "\@N_TAG_VAD_NUMBER_ID" THEN ! command ID
+				BEGIN
+					S.SLOT.RESULT := S.SLOT.RESULT ;
+				END
+			ELSE
+				BEGIN
+					IF $S.RESULT.ID[1][N.TEMP] = "11010" THEN ! plus/+
+						BEGIN
+							S.SLOT.RESULT := S.SLOT.RESULT + "+" ;
+						END
+					ELSE
+						BEGIN
+							IF $S.RESULT.ID[1][N.TEMP] = "11011" THEN ! pound/#
+								BEGIN
+									S.SLOT.RESULT := S.SLOT.RESULT + "#" ;
+								END
+							ELSE
+								BEGIN
+									IF $S.RESULT.ID[1][N.TEMP] = "11012" THEN ! Star/*
+										BEGIN
+											S.SLOT.RESULT := S.SLOT.RESULT + "*" ;
+										END
+									ELSE !number
+										BEGIN
+											N.TEMP.STRING ~= $S.RESULT.ID[1][N.TEMP] ; ! NUMBER ID 변환
+											N.TEMP.STRING := N.TEMP.STRING % 11000 ; ! 11001 % 11000 = 1
+											
+											S.TEMP.SLOT.RESULT ~= N.TEMP.STRING ; ! 숫자 1 -> 문자 1 변환
+											
+											S.SLOT.RESULT := S.SLOT.RESULT + S.TEMP.SLOT.RESULT ;
+										END
+								END
+						END
+				END
+			N.TEMP := N.TEMP + 1 ;
+		END
+	S.SLOT.RESULT := S.SLOT.RESULT ;
+EOP
+
+JINIE LpProc.VadNumSlotTTS ()
+
+	TEMPORARY NUMBER N.TEMP := 1 ;
+	S.BT.DIALNUMBER.PROMPT.STR := "" ;
+	
+	WHILE S.BT.DIALNUMBER.TTSSTRING[N.TEMP] <> ""	DO
+		BEGIN
+			IF S.BT.DIALNUMBER.TTSSTRING[N.TEMP] = "+" THEN !plus/+
+				BEGIN
+					S.BT.DIALNUMBER.PROMPT.STR := S.BT.DIALNUMBER.PROMPT.STR + "\\\\pause=100\\\\" + "Mais" ;
+				END
+			ELSE
+				BEGIN
+					IF S.BT.DIALNUMBER.TTSSTRING[N.TEMP] = "#" THEN !pound/#
+						BEGIN
+							S.BT.DIALNUMBER.PROMPT.STR := S.BT.DIALNUMBER.PROMPT.STR + "\\\\pause=100\\\\" + "Cerquilha" ;
+						END
+					ELSE
+						BEGIN
+							IF S.BT.DIALNUMBER.TTSSTRING[N.TEMP] = "*" THEN !Star/*
+								BEGIN
+									S.BT.DIALNUMBER.PROMPT.STR := S.BT.DIALNUMBER.PROMPT.STR + "\\\\pause=100\\\\" + "Estrela" ;
+								END
+							ELSE !number
+								BEGIN
+									S.BT.DIALNUMBER.PROMPT.STR := S.BT.DIALNUMBER.PROMPT.STR + "\\\\pause=100\\\\" + S.BT.DIALNUMBER.TTSSTRING[N.TEMP] ;
+								END
+						END
+				END
+			N.TEMP := N.TEMP + 1 ;
+		END
+EOP

@@ -3,10 +3,15 @@
   "main": "./lib/mzlp-projectmanager",
   "version": "0.0.0",
   "description": "A short description of your package",
-  "keywords": ["mzlp","mediazen","lpteam","juicyjusung"
+  "keywords": [
+    "mzlp",
+    "mediazen",
+    "lpteam",
+    "juicyjusung"
   ],
   "activationCommands": {
     "atom-workspace": "mzlp-projectmanager:toggle"
+
   },
   "repository": "https://github.com/atom/mzlp-projectmanager",
   "license": "MIT",
@@ -14,5 +19,7 @@
     "atom": ">=1.0.0 <2.0.0"
   },
   "dependencies": {
+    "jquery": "^3.2.1",
+    "jsdom": "^11.0.0"
   }
 }
