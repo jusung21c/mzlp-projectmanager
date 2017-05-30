@@ -1,5 +1,5 @@
 {
   "atom-workspace": {
-    "ctrl-alt-o": "mzlp-projectmanager:toggle"
+    "ctrl-alt-p": "mzlp-projectmanager:toggle"
   }
 }
