@@ -1,7 +1,7 @@
 {
   "name": "mzlp-projectmanager",
   "main": "./lib/mzlp-projectmanager",
-  "version": "0.0.3",
+  "version": "0.1.0",
   "description": "A short description of your package",
   "keywords": [
     "mzlp",
