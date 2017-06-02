@@ -22,6 +22,8 @@
     "jsdom": "^11.0.0"
   },
   "atomPackageDependencies": {
-    "autocomplete-plus": ">=0.22.12"
+    "mzlp-gotodefinition" : "0.1.1",
+    "language-mzlp":"0.2.0",
+    "mzlp-svn" : "0.1.0"
   }
 }
