@@ -1,7 +1,7 @@
 {
   "name": "mzlp-projectmanager",
   "main": "./lib/mzlp-projectmanager",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "A short description of your package",
   "keywords": [
     "mzlp",
@@ -22,8 +22,8 @@
     "jsdom": "^11.0.0"
   },
   "atomPackageDependencies": {
-    "mzlp-gotodefinition" : "0.1.1",
-    "language-mzlp":"0.2.0",
-    "mzlp-svn" : "0.1.0"
+    "mzlp-gotodefinition": "0.1.1",
+    "language-mzlp": "0.2.0",
+    "mzlp-svn": "0.1.0"
   }
 }
