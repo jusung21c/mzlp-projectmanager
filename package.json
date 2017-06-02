@@ -1,7 +1,7 @@
 {
   "name": "mzlp-projectmanager",
   "main": "./lib/mzlp-projectmanager",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "A short description of your package",
   "keywords": [
     "mzlp",
@@ -22,6 +22,6 @@
     "jsdom": "^11.0.0"
   },
   "atomPackageDependencies": {
-  "autocomplete-plus": ">=0.22.12"
-}
+    "autocomplete-plus": ">=0.22.12"
+  }
 }
