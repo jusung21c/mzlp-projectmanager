@@ -18,6 +18,7 @@
     "atom": ">=1.0.0 <2.0.0"
   },
   "dependencies": {
+    "fs-finder": "^1.8.1",
     "jquery": "^3.2.1",
     "jsdom": "^11.0.0"
   },
