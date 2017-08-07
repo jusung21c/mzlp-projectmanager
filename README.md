@@ -1,5 +1,5 @@
-# mzlp-projectmanager package
+# MZLP-ProjectManager Package [LP 언어 분류 패키지]
 
-A short description of your package.
-
-![A screenshot of your package](https://f.cloud.github.com/assets/69169/2290250/c35d867a-a017-11e3-86be-cd7c5bf3ff9b.gif)
+## 사용법
+* `Ctrl + Alt + Q` 설정 패널 열기/닫기 토글
+* 패널에서 작업을 원하는 언어 선택시 프로젝트에 해당 언어만 로드 됩니다.
