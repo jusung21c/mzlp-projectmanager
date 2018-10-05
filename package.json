@@ -20,7 +20,9 @@
   "dependencies": {
     "fs-finder": "^1.8.1",
     "jquery": "^3.2.1",
-    "jsdom": "^11.0.0"
+    "jsdom": "^11.0.0",
+    "vue": "^2.5.16",
+    "vuetify": "^1.0.8"
   },
   "atomPackageDependencies": {
     "mzlp-gotodefinition": "0.1.1",
